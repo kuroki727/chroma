@@ -1,0 +1,5 @@
+# Illustrative plain text ONLY, not an assumed Dynamic Island format.
+# Replace this entire template with your application's actual syntax.
+background {{ background }}
+foreground {{ foreground }}
+accent {{ primary }}

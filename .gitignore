@@ -1,0 +1,44 @@
+# Cargo build artifacts. Cargo.lock is intentionally tracked for this CLI.
+/target/
+**/target/
+*.rs.bk
+*.rlib
+*.rmeta
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.profraw
+*.profdata
+
+# Credentials and private environment files.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+/credentials*
+/secrets*
+
+# Runtime data and machine-local configuration. Keep examples/ tracked.
+/config.toml
+/adapters/
+/generated/
+/state/
+/cache/
+/local/
+/.chroma/
+*.log
+
+# Editor and operating-system files.
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.DS_Store

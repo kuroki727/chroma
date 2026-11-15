@@ -1,0 +1,10 @@
+#![forbid(unsafe_code)]
+
+pub mod adapters;
+pub mod cli;
+pub mod config;
+pub mod engine;
+pub mod palette;
+pub mod safe_fs;
+
+pub use anyhow::{Context, Result, bail, ensure};
