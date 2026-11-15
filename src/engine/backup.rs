@@ -16,7 +16,8 @@ pub fn save<T: Serialize>(path: &Path, value: &T, replace: bool) -> Result<()> {
 }
 
 pub fn create(state: &Path, transaction: &Transaction) -> Result<String> {
-    safe_fs::Dir::open(&state.join("transactions"), true)?;
+    transaction.validate()?;
+    safe_fs::Dir::open(&state.join("transactions"), true)?.check_private()?;
     let id = format!(
         "tx-{}-{}",
         std::process::id(),
@@ -31,15 +32,29 @@ pub fn create(state: &Path, transaction: &Transaction) -> Result<String> {
 }
 
 pub fn load(state: &Path, id: &str) -> Result<Transaction> {
+    validate_id(id)?;
+    let path = state.join("transactions").join(format!("{id}.toml"));
+    let bytes = safe_fs::read_private_optional(&path)?
+        .with_context(|| format!("missing backup {}", path.display()))?;
+    let tx: Transaction = toml::from_str(std::str::from_utf8(&bytes)?).context("invalid backup")?;
+    tx.validate()
+        .context("invalid backup structure; no files changed")?;
     ensure!(
-        id.starts_with("tx-")
-            && id
-                .bytes()
-                .all(|b| b.is_ascii_digit() || b == b'-' || b == b't' || b == b'x'),
+        tx.parent.as_deref() != Some(id),
+        "backup cannot be its own parent"
+    );
+    Ok(tx)
+}
+
+pub fn validate_id(id: &str) -> Result<()> {
+    let parts: Vec<_> = id.split('-').collect();
+    ensure!(
+        parts.len() == 3
+            && parts[0] == "tx"
+            && parts[1..]
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
         "invalid transaction ID"
     );
-    let path = state.join("transactions").join(format!("{id}.toml"));
-    let bytes = safe_fs::read_optional(&path)?
-        .with_context(|| format!("missing backup {}", path.display()))?;
-    toml::from_str(std::str::from_utf8(&bytes)?).context("invalid backup")
+    Ok(())
 }

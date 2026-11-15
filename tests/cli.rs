@@ -212,3 +212,96 @@ fn emergency_rollback_works_with_broken_config_and_missing_templates() {
     assert!(cli(&cfg, &["rollback", "--no-reload"]).status.success());
     assert!(!cfg.join("generated/kitty.conf").exists());
 }
+
+#[test]
+fn explicit_xdg_paths_and_state_override_are_honored_without_desktop_access() {
+    let root = tempdir().unwrap();
+    let config = root.path().join("xdg-config");
+    let state = root.path().join("xdg-state");
+    let cache = root.path().join("xdg-cache");
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_chroma"))
+            .env("XDG_CONFIG_HOME", &config)
+            .env("XDG_STATE_HOME", &state)
+            .env("XDG_CACHE_HOME", &cache)
+            .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(run(&["init"]).status.success());
+    let cfg = config.join("chroma");
+    fs::write(cfg.join("config.toml"), "[adapters.kitty]\nenabled=true\n").unwrap();
+    assert!(run(&["apply", "nord", "--no-reload"]).status.success());
+    assert!(state.join("chroma/state.toml").exists());
+    assert!(!cfg.join("state").exists());
+    assert!(!cache.exists());
+    assert!(run(&["rollback", "--no-reload"]).status.success());
+    let override_state = root.path().join("override-state");
+    assert!(
+        run(&[
+            "--config-dir",
+            cfg.to_str().unwrap(),
+            "--state-dir",
+            override_state.to_str().unwrap(),
+            "apply",
+            "paper",
+            "--no-reload"
+        ])
+        .status
+        .success()
+    );
+    assert!(override_state.join("state.toml").exists());
+}
+
+#[test]
+fn wallpaper_fifo_is_rejected_without_hanging() {
+    let root = tempdir().unwrap();
+    let fifo = root.path().join("image.png");
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        &fifo,
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        0,
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_chroma"))
+        .arg("--config-dir")
+        .arg(root.path().join("cfg"))
+        .arg("generate")
+        .arg(&fifo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert_eq!(status.code(), Some(1));
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("generator blocked on a FIFO");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!root.path().join("cfg").exists());
+}
+
+#[test]
+fn untrusted_palette_errors_do_not_emit_terminal_control_sequences() {
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("palettes")).unwrap();
+    fs::write(
+        root.path().join("palettes/invalid.toml"),
+        b"name = \"\x1b]52;c;dGVzdA==\x07\"\n[colors]\n",
+    )
+    .unwrap();
+    let output = cli(root.path(), &["validate", "invalid"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!output.stderr.iter().any(|b| *b == 0x1b || *b == 0x07));
+}

@@ -10,7 +10,7 @@ palettes=$(chroma "$@" list --names-only)
 if selection=$(printf '%s\n' "$palettes" | fuzzel --dmenu --prompt 'Chroma: '); then
     [ -n "$selection" ] || exit 0
     # Palette IDs are validated by the Rust CLI; argv is never evaluated.
-    exec chroma "$@" apply "$selection"
+    exec chroma "$@" apply -- "$selection"
 else
     status=$?
     # Fuzzel exits 1 on cancellation. Preserve other failures.

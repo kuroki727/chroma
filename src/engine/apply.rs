@@ -102,6 +102,18 @@ pub fn apply(
     palette: Palette,
     no_reload: bool,
 ) -> Result<usize> {
+    apply_inner(paths, config, id, palette, no_reload, |_| Ok(()))
+}
+
+fn apply_inner(
+    paths: &Paths,
+    config: &Config,
+    id: &str,
+    palette: Palette,
+    no_reload: bool,
+    after_replace: impl Fn(usize) -> Result<()>,
+) -> Result<usize> {
+    crate::palette::valid_id(id)?;
     let state_dir = Dir::open(&paths.state, true)?;
     let _lock = state_dir
         .lock()
@@ -141,18 +153,13 @@ pub fn apply(
     state.save(&paths.state)?;
     let reload_enabled = config.general.auto_reload && !no_reload;
     let result = (|| -> Result<()> {
-        for (((dir, file), entry), staged) in plan.dirs.iter().zip(&plan.entries).zip(staged) {
-            ensure!(
-                dir.read(file)? == entry.before,
-                "destination changed during apply: {}",
-                entry.path.display()
-            );
-            if entry.before.is_none() {
-                staged.commit_new(file)
-            } else {
-                staged.commit(file)
-            }
-            .with_context(|| format!("replacing {}", entry.path.display()))?;
+        for (index, (((_, file), entry), staged)) in
+            plan.dirs.iter().zip(&plan.entries).zip(staged).enumerate()
+        {
+            staged
+                .commit_checked(file, entry.before.as_ref())
+                .with_context(|| format!("replacing {}", entry.path.display()))?;
+            after_replace(index + 1)?;
         }
         if reload_enabled {
             for output in &plan.outputs {
@@ -173,4 +180,68 @@ pub fn apply(
         return rollback::recover_failed(paths, config, &transaction, reload_enabled, error);
     }
     Ok(plan.entries.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Adapter;
+
+    #[test]
+    fn injected_failures_after_first_and_multiple_replacements_restore_real_transaction() {
+        for fail_at in [1, 2, 3] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = Paths::discover(Some(root.path().join("config")), None).unwrap();
+            Dir::open(&paths.config.join("generated"), true).unwrap();
+            let mut config = Config::default();
+            for name in ["niri", "kitty", "foot"] {
+                config.adapters.insert(
+                    name.into(),
+                    Adapter {
+                        enabled: true,
+                        ..Default::default()
+                    },
+                );
+            }
+            apply(
+                &paths,
+                &config,
+                "rustwood",
+                crate::palette::presets::get("rustwood").unwrap(),
+                true,
+            )
+            .unwrap();
+            let before = State::load(&paths.state).unwrap();
+            let original_manifest = std::fs::read(paths.state.join("state.toml")).unwrap();
+            let error = apply_inner(
+                &paths,
+                &config,
+                "nord",
+                crate::palette::presets::get("nord").unwrap(),
+                true,
+                |count| {
+                    let pending = State::load(&paths.state)?
+                        .pending
+                        .expect("journal precedes replacement");
+                    backup::load(&paths.state, &pending.transaction)?;
+                    crate::ensure!(
+                        count != fail_at,
+                        "injected failure after {count} replacements"
+                    );
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+            assert!(format!("{error:#}").contains("injected failure"));
+            assert_eq!(
+                std::fs::read(paths.state.join("state.toml")).unwrap(),
+                original_manifest
+            );
+            for (path, snapshot) in &before.current.unwrap().files {
+                let (dir, name) = Dir::parent(path).unwrap();
+                assert_eq!(dir.read(&name).unwrap().as_ref(), Some(snapshot));
+            }
+            assert!(State::load(&paths.state).unwrap().pending.is_none());
+        }
+    }
 }

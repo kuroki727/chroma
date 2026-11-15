@@ -14,6 +14,8 @@ pub fn render_with_alpha(
     let variables = palette.variables();
     let mut result = String::with_capacity(source.len());
     let mut rest = source;
+    let mut line = 1;
+    let mut counted = 0;
     while !rest.is_empty() {
         if let Some(tail) = rest.strip_prefix("{{{{") {
             result.push_str("{{");
@@ -23,7 +25,11 @@ pub fn render_with_alpha(
             rest = tail;
         } else if let Some(tail) = rest.strip_prefix("{{") {
             let offset = source.len() - rest.len();
-            let line = source[..offset].bytes().filter(|b| *b == b'\n').count() + 1;
+            line += source[counted..offset]
+                .bytes()
+                .filter(|b| *b == b'\n')
+                .count();
+            counted = offset;
             let end = tail
                 .find("}}")
                 .ok_or_else(|| anyhow::anyhow!("template line {line}: unclosed variable"))?;

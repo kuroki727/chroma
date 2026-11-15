@@ -236,9 +236,13 @@ fixtures are covered. Identical input/settings reproduce the same TOML on the
 same toolchain; floating-point behavior across future algorithm versions is not
 a stable palette format guarantee.
 
-Limits: compressed input <=64 MiB, dimensions <=16384 per side, decoder allocation
-limit 256 MiB. The image is decoded before thumbnailing, so large images still
-cost decode time and memory. Fully transparent images are rejected. Embedded ICC
+Limits: actual compressed input <=64 MiB, dimensions <=16384 per side, at most
+8,388,608 pixels (including 3840×2160), and <=64 MiB decoded output. These checks
+precede pixel decoding. FIFO/device inputs are rejected without blocking. The
+image is decoded before thumbnailing, so large images still cost decode time and
+memory. Codec-internal allocations and compressed buffers add overhead; this is
+not a hard process memory cap. Resize larger wallpapers offline. Fully transparent
+images are rejected. Embedded ICC
 profiles/HDR and wide-gamut color management are not implemented; pixels are treated
 as sRGB. Thresholded transparency is an approximation.
 
@@ -465,10 +469,14 @@ in its destination directory, writes durable backups, and records a pending
 transaction **before replacing any output**. Each file is replaced by same-directory
 rename. Files and directories are fsynced. Reload commands run only after all
 outputs are replaced. The active palette is committed after reload success.
+Recovery validates the
+whole transaction structure and its relationship to the manifest before writes;
+malformed but parseable records are rejected.
 
 Normal write/reload failure attempts to restore all previous files and state.
 If reloads already ran, Chroma also attempts to reload the restored files using
-the current trusted config. Reload programs' external side effects cannot be
+the current trusted config, even when templates have since been removed. Reload
+programs' external side effects cannot be
 rolled back. Applications' own watchers may observe intermediate files.
 
 `rollback` restores the latest transaction's before snapshots and previous
@@ -500,7 +508,9 @@ Safety boundaries and limits:
   refused. Parent directories must be user-owned and not group/world writable.
   Symlink-based dotfile directories must use their real, explicitly chosen paths.
 - Ordinary Unix permission bits are preserved. New outputs/backups are private
-  (`0600`), directories `0700`. Ownership groups, ACLs, xattrs, timestamps and
+  (`0600`), directories `0700`. Existing state/transaction directories must also
+  be private; recovery records cannot grant group/other access. Ownership groups,
+  ACLs, xattrs, timestamps and
   SELinux labels are not preserved by replacement; use only ordinary user theme files.
 - Advisory locking serializes Chroma mutations sharing a state directory. External
   writers do not honor that lock; snapshots are compared before replacement, but
@@ -544,6 +554,10 @@ colors, unknown variables, both generation modes and codecs, determinism, missin
 inputs, unsafe destinations, backup/permissions, history, partial recovery,
 external conflicts, locks, reload errors/timeouts, config overrides, alpha
 preservation and emergency recovery. No test restarts desktop applications.
+
+Audit details, trust boundaries and lifecycle: [security](docs/SECURITY.md),
+[architecture](docs/ARCHITECTURE.md), [audit findings](docs/AUDIT.md), and
+[validation results](VALIDATION.md).
 
 ## Roadmap
 

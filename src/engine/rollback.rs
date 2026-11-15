@@ -10,10 +10,14 @@ use crate::{
 /// Recovery is retryable: entries already restored are skipped. External edits
 /// are preserved and reported instead of being overwritten.
 pub fn restore(paths: &Paths, transaction: &Transaction) -> Result<()> {
+    // Reject a malformed later entry before touching an earlier valid one.
+    transaction.validate()?;
+    for entry in &transaction.entries {
+        paths.check_output(&entry.path)?;
+    }
     let mut errors = Vec::new();
     for entry in transaction.entries.iter().rev() {
         let result = (|| -> Result<()> {
-            paths.check_output(&entry.path)?;
             let (dir, file) = Dir::parent(&entry.path)?;
             dir.check_writable()?;
             dir.check_target(&file)?;
@@ -26,7 +30,8 @@ pub fn restore(paths: &Paths, transaction: &Transaction) -> Result<()> {
                 "file changed outside Chroma; preserve it or restore manually before retrying"
             );
             if let Some(before) = &entry.before {
-                dir.stage(&before.bytes, before.mode)?.commit(&file)?;
+                dir.stage(&before.bytes, before.mode)?
+                    .commit_checked(&file, Some(&entry.after))?;
             } else {
                 dir.remove(&file)?;
             }
@@ -49,16 +54,14 @@ fn reload_restored(paths: &Paths, config: &Config, transaction: &Transaction) ->
     for entry in &transaction.entries {
         if let Some(adapter) = config.adapters.get(&entry.adapter).filter(|a| a.enabled) {
             // Never execute commands stored in backups or palette data.
-            let palette = transaction
-                .before
-                .as_ref()
-                .or(transaction.after.as_ref())
-                .context("missing palette in backup")?;
-            let output = crate::adapters::render(&entry.adapter, adapter, paths, &palette.palette)?;
-            if output.path == entry.path {
-                if let Err(error) = reload::run(&adapter.reload, output.timeout_ms) {
-                    errors.push(format!("{}: {error:#}", entry.adapter));
+            let result = (|| -> Result<()> {
+                if crate::adapters::output_path(&entry.adapter, adapter, paths)? == entry.path {
+                    reload::run(&adapter.reload, adapter.reload_timeout_ms.unwrap_or(3000))?;
                 }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                errors.push(format!("{}: {error:#}", entry.adapter));
             }
         }
     }
@@ -106,6 +109,15 @@ pub fn rollback(paths: &Paths, config: &Config, no_reload: bool) -> Result<()> {
         .or_else(|| state.head.clone())
         .context("nothing to roll back")?;
     let transaction = backup::load(&paths.state, &id)?;
+    // The manifest must describe one of this transaction's two endpoints.
+    // A pending apply still points at `before`; a normal rollback starts at `after`.
+    ensure!(
+        (state.current == transaction.before
+            && state.head == transaction.parent
+            && state.pending.is_some())
+            || (state.current == transaction.after && state.head.as_deref() == Some(&id)),
+        "recovery state does not match backup; no files changed"
+    );
     // Mark rollback before restoring anything; crashes can always be retried.
     state.pending = Some(Pending {
         transaction: id,

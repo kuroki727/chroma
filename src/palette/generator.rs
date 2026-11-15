@@ -6,8 +6,18 @@ use crate::{
     },
 };
 use clap::ValueEnum;
-use image::{ImageFormat, ImageReader, Limits};
-use std::{collections::BTreeMap, fs::File, io::BufReader, path::Path};
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
+use std::{
+    collections::BTreeMap,
+    fs::OpenOptions,
+    io::{Cursor, Read},
+    os::unix::fs::OpenOptionsExt,
+    path::Path,
+};
+
+const MAX_INPUT: u64 = 64 * 1024 * 1024;
+const MAX_PIXELS: u64 = 8_388_608; // Includes 3840×2160, rejects decode bombs before allocation.
+const MAX_DECODED: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -19,13 +29,25 @@ pub enum Mode {
 /// Fixed-seed, farthest-point initialized Lloyd k-means in OKLab.
 /// Sampling is bounded to 128×128; no random state or hash iteration order.
 pub fn generate(path: &Path, mode: Mode, name: &str) -> Result<Palette> {
-    let file = File::open(path).with_context(|| format!("opening image {}", path.display()))?;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
+        .open(path)
+        .with_context(|| format!("opening image {}", path.display()))?;
     let metadata = file.metadata()?;
     ensure!(
-        metadata.is_file() && metadata.len() <= 64 * 1024 * 1024,
+        metadata.is_file() && metadata.len() <= MAX_INPUT,
         "image must be a regular file no larger than 64 MiB"
     );
-    let mut reader = ImageReader::new(BufReader::new(file)).with_guessed_format()?;
+    // A metadata length check alone does not bound a growing or virtual file.
+    // Freeze bounded input before passing it to codecs which read to EOF.
+    let mut input = Vec::new();
+    file.take(MAX_INPUT + 1).read_to_end(&mut input)?;
+    ensure!(
+        input.len() as u64 <= MAX_INPUT,
+        "compressed image exceeds 64 MiB"
+    );
+    let mut reader = ImageReader::new(Cursor::new(input)).with_guessed_format()?;
     ensure!(
         matches!(reader.format(), Some(ImageFormat::Png | ImageFormat::Jpeg)),
         "only PNG and JPEG images are supported"
@@ -33,11 +55,22 @@ pub fn generate(path: &Path, mode: Mode, name: &str) -> Result<Palette> {
     let mut limits = Limits::default();
     limits.max_image_width = Some(16384);
     limits.max_image_height = Some(16384);
-    limits.max_alloc = Some(256 * 1024 * 1024);
+    limits.max_alloc = Some(MAX_DECODED);
     reader.limits(limits);
-    let sampled = reader
-        .decode()
-        .context("decoding image within memory/dimension limits")?
+    let decoder = reader
+        .into_decoder()
+        .context("reading image headers within limits")?;
+    let (width, height) = decoder.dimensions();
+    ensure!(
+        width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_PIXELS,
+        "image pixel count exceeds 8,388,608 or is zero"
+    );
+    ensure!(
+        decoder.total_bytes() <= MAX_DECODED,
+        "decoded image exceeds 64 MiB"
+    );
+    let sampled = DynamicImage::from_decoder(decoder)
+        .context("decoding image within pixel/output limits")?
         .thumbnail(128, 128)
         .to_rgba8();
     // Sort and collapse repeated colors to reduce work on flat wallpapers.

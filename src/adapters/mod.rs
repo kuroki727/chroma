@@ -54,6 +54,23 @@ pub struct Output {
     pub timeout_ms: u64,
 }
 
+/// Resolve the destination without reading a template or requiring a palette.
+/// Recovery must be able to reload restored files even if templates were removed.
+pub fn output_path(name: &str, adapter: &Adapter, paths: &Paths) -> Result<PathBuf> {
+    let path = match &adapter.output {
+        Some(output) => paths.expand(output)?,
+        None => paths.config.join("generated").join(
+            BUILTINS
+                .iter()
+                .find(|(id, _, _)| *id == name)
+                .with_context(|| format!("adapter {name}: custom adapters require an output"))?
+                .1,
+        ),
+    };
+    paths.check_output(&path)?;
+    Ok(path)
+}
+
 pub fn render(name: &str, adapter: &Adapter, paths: &Paths, palette: &Palette) -> Result<Output> {
     let builtin = BUILTINS.iter().find(|(id, _, _)| *id == name);
     let source = if let Some(file) = &adapter.template {
@@ -70,15 +87,7 @@ pub fn render(name: &str, adapter: &Adapter, paths: &Paths, palette: &Palette) -
             None => embedded.to_string(),
         }
     };
-    let path = match &adapter.output {
-        Some(output) => paths.expand(output)?,
-        None => paths.config.join("generated").join(
-            builtin
-                .with_context(|| format!("adapter {name}: custom adapters require an output"))?
-                .1,
-        ),
-    };
-    paths.check_output(&path)?;
+    let path = output_path(name, adapter, paths)?;
     if let Some(config) = &adapter.config_path {
         ensure!(
             paths.expand(config)? != path,

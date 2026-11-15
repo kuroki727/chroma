@@ -230,7 +230,7 @@ fn interrupted_partial_apply_is_recoverable_without_running_commands() {
         bytes: b"partially applied".to_vec(),
         mode: 0o600,
     };
-    let tx = Transaction {
+    let mut tx = Transaction {
         parent: state.head.clone(),
         before: state.current.clone(),
         after: None,
@@ -249,6 +249,11 @@ fn interrupted_partial_apply_is_recoverable_without_running_commands() {
             },
         ],
     };
+    let mut after = state.current.clone().unwrap();
+    for entry in &tx.entries {
+        after.files.insert(entry.path.clone(), entry.after.clone());
+    }
+    tx.after = Some(after);
     let id = backup::create(&f.paths.state, &tx).unwrap();
     state.pending = Some(Pending {
         transaction: id,
@@ -353,7 +358,7 @@ fn automatic_recovery_restores_a_simulated_partial_write_failure() {
         bytes: b"new".to_vec(),
         mode: old.mode,
     };
-    let tx = Transaction {
+    let mut tx = Transaction {
         parent: state.head.clone(),
         before: state.current.clone(),
         after: None,
@@ -364,6 +369,9 @@ fn automatic_recovery_restores_a_simulated_partial_write_failure() {
             after: after.clone(),
         }],
     };
+    let mut after_state = state.current.clone().unwrap();
+    after_state.files.insert(f.output(), after.clone());
+    tx.after = Some(after_state);
     chroma::safe_fs::write(&f.output(), &after.bytes, true).unwrap();
     let error = engine::rollback::recover_failed::<()>(
         &f.paths,
@@ -375,4 +383,156 @@ fn automatic_recovery_restores_a_simulated_partial_write_failure() {
     .unwrap_err();
     assert!(format!("{error:#}").contains("injected I/O failure"));
     assert_eq!(fs::read(f.output()).unwrap(), old.bytes);
+}
+
+#[test]
+fn corrupt_but_parseable_backup_is_rejected_before_any_recovery_write() {
+    let f = Fixture::new();
+    f.apply("rustwood").unwrap();
+    let original = fs::read(f.output()).unwrap();
+    let state_bytes = fs::read(f.paths.state.join("state.toml")).unwrap();
+    let state = State::load(&f.paths.state).unwrap();
+    let id = state.head.as_ref().unwrap();
+    let mut tx = backup::load(&f.paths.state, id).unwrap();
+    tx.entries.clear();
+    let path = f
+        .paths
+        .state
+        .join("transactions")
+        .join(format!("{id}.toml"));
+    fs::write(path, toml::to_string(&tx).unwrap()).unwrap();
+    assert!(rollback::rollback(&f.paths, &f.config, true).is_err());
+    assert_eq!(fs::read(f.output()).unwrap(), original);
+    assert_eq!(
+        fs::read(f.paths.state.join("state.toml")).unwrap(),
+        state_bytes
+    );
+}
+
+#[test]
+fn rollback_reload_does_not_require_a_template() {
+    let mut f = Fixture::new();
+    f.apply("rustwood").unwrap();
+    f.apply("nord").unwrap();
+    fs::remove_file(f.paths.config.join("templates/test")).unwrap();
+    let marker = f._root.path().join("reloaded");
+    f.config.general.auto_reload = true;
+    f.config.adapters.get_mut("test").unwrap().reload =
+        vec!["/usr/bin/touch".into(), marker.to_str().unwrap().into()];
+    rollback::rollback(&f.paths, &f.config, false).unwrap();
+    assert!(marker.exists());
+    assert_eq!(
+        State::load(&f.paths.state).unwrap().current.unwrap().id,
+        "rustwood"
+    );
+}
+
+#[test]
+fn backup_creation_failure_preserves_files_and_committed_state() {
+    let f = Fixture::new();
+    f.apply("rustwood").unwrap();
+    let original = fs::read(f.output()).unwrap();
+    let state_bytes = fs::read(f.paths.state.join("state.toml")).unwrap();
+    fs::set_permissions(
+        f.paths.state.join("transactions"),
+        fs::Permissions::from_mode(0o500),
+    )
+    .unwrap();
+    assert!(f.apply("nord").is_err());
+    assert_eq!(fs::read(f.output()).unwrap(), original);
+    assert_eq!(
+        fs::read(f.paths.state.join("state.toml")).unwrap(),
+        state_bytes
+    );
+    assert_eq!(
+        fs::read_dir(f.paths.config.join("generated"))
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn repeated_and_rapid_applies_preserve_rollback_history() {
+    let f = Fixture::new();
+    let ids = ["rustwood", "rustwood", "nord", "paper", "nord", "rustwood"];
+    for id in ids {
+        f.apply(id).unwrap();
+    }
+    for prior in ids[..ids.len() - 1].iter().rev() {
+        rollback::rollback(&f.paths, &f.config, true).unwrap();
+        assert_eq!(
+            State::load(&f.paths.state).unwrap().current.unwrap().id,
+            *prior
+        );
+    }
+    rollback::rollback(&f.paths, &f.config, true).unwrap();
+    assert!(!f.output().exists());
+}
+
+#[test]
+fn state_and_backup_privacy_is_checked_before_outputs_change() {
+    for target in ["directory", "manifest", "transactions", "backup"] {
+        let f = Fixture::new();
+        f.apply("rustwood").unwrap();
+        let state = State::load(&f.paths.state).unwrap();
+        let path = match target {
+            "directory" => f.paths.state.clone(),
+            "manifest" => f.paths.state.join("state.toml"),
+            "transactions" => f.paths.state.join("transactions"),
+            _ => f
+                .paths
+                .state
+                .join("transactions")
+                .join(format!("{}.toml", state.head.unwrap())),
+        };
+        let original = fs::read(f.output()).unwrap();
+        let mode = if path.is_dir() { 0o755 } else { 0o644 };
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        if target == "backup" {
+            assert!(rollback::rollback(&f.paths, &f.config, true).is_err());
+        } else {
+            assert!(f.apply("nord").is_err());
+        }
+        assert_eq!(fs::read(f.output()).unwrap(), original);
+    }
+}
+
+#[test]
+fn inconsistent_recovery_endpoints_and_duplicate_entries_are_rejected() {
+    for defect in ["duplicate", "permission", "after", "manifest"] {
+        let f = Fixture::new();
+        f.apply("rustwood").unwrap();
+        let mut state = State::load(&f.paths.state).unwrap();
+        let id = state.head.clone().unwrap();
+        let mut tx = backup::load(&f.paths.state, &id).unwrap();
+        match defect {
+            "duplicate" => tx.entries.push(tx.entries[0].clone()),
+            "permission" => tx.entries[0].after.mode |= 0o4000,
+            "after" => {
+                tx.after.as_mut().unwrap().files.clear();
+            }
+            _ => {
+                state.current.as_mut().unwrap().id = "wrong-palette".into();
+                state.save(&f.paths.state).unwrap();
+            }
+        }
+        let path = f
+            .paths
+            .state
+            .join("transactions")
+            .join(format!("{id}.toml"));
+        fs::write(path, toml::to_string(&tx).unwrap()).unwrap();
+        let original = fs::read(f.output()).unwrap();
+        let manifest = fs::read(f.paths.state.join("state.toml")).unwrap();
+        assert!(
+            rollback::rollback(&f.paths, &f.config, true).is_err(),
+            "{defect}"
+        );
+        assert_eq!(fs::read(f.output()).unwrap(), original);
+        assert_eq!(
+            fs::read(f.paths.state.join("state.toml")).unwrap(),
+            manifest
+        );
+    }
 }

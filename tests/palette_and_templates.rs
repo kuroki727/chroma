@@ -154,3 +154,12 @@ fn fuzzel_requires_explicit_local_alpha_values_and_preserves_them() {
         );
     }
 }
+
+#[test]
+fn many_template_variables_keep_precise_line_numbers() {
+    let p = palette::presets::get("rustwood").unwrap();
+    let source = "{{ background }}\n".repeat(8192);
+    assert_eq!(template::render(&source, &p).unwrap().lines().count(), 8192);
+    let error = template::render(&(source + "{{ missing }}"), &p).unwrap_err();
+    assert!(error.to_string().contains("line 8193"));
+}

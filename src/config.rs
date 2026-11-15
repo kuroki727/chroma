@@ -84,6 +84,15 @@ impl Paths {
 
     pub fn check_output(&self, path: &Path) -> Result<()> {
         ensure!(
+            path.is_absolute()
+                && path.file_name().is_some()
+                && !path
+                    .components()
+                    .any(|c| matches!(c, Component::ParentDir | Component::CurDir)),
+            "output must be an absolute file path without traversal: {}",
+            path.display()
+        );
+        ensure!(
             !path.starts_with(&self.state),
             "output cannot overwrite Chroma state"
         );

@@ -22,8 +22,39 @@ pub struct Snapshot {
     pub mode: u32,
 }
 
+impl Snapshot {
+    pub fn validate(&self) -> crate::Result<()> {
+        crate::ensure!(
+            self.mode & !0o777 == 0 && self.bytes.len() as u64 <= LIMIT,
+            "invalid backup snapshot permissions or size"
+        );
+        Ok(())
+    }
+}
+
+fn leaf(name: &std::ffi::OsStr) -> io::Result<()> {
+    let mut parts = Path::new(name).components();
+    if matches!(parts.next(), Some(Component::Normal(p)) if p == name) && parts.next().is_none() {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "expected a single filename without traversal",
+        ))
+    }
+}
+
 #[derive(Debug)]
 pub struct Dir(File);
+
+pub struct Lock(File);
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        // Closing alone can retain the lock in a concurrently forked child until
+        // exec. Explicit unlock ends this operation's critical section promptly.
+        let _ = fs::flock(&self.0, fs::FlockOperation::Unlock);
+    }
+}
 
 impl Dir {
     pub fn open(path: &Path, create: bool) -> io::Result<Self> {
@@ -45,7 +76,10 @@ impl Dir {
                         Ok(next) => fd = next,
                         Err(rustix::io::Errno::NOENT) if create => {
                             match fs::mkdirat(&fd, name, Mode::from_raw_mode(0o700)) {
-                                Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+                                Ok(()) => {
+                                    fs::fsync(&fd)?;
+                                }
+                                Err(rustix::io::Errno::EXIST) => {}
                                 Err(e) => return Err(e.into()),
                             }
                             fd = fs::openat(&fd, name, flags, Mode::empty())?;
@@ -82,7 +116,18 @@ impl Dir {
         Ok(())
     }
 
+    pub fn check_private(&self) -> io::Result<()> {
+        self.check_writable()?;
+        if self.0.metadata()?.mode() & 0o077 != 0 {
+            return Err(io::Error::other(
+                "state/backup directory must be private (chmod 700)",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn read(&self, name: &std::ffi::OsStr) -> io::Result<Option<Snapshot>> {
+        leaf(name)?;
         let fd = match fs::openat(
             &self.0,
             name,
@@ -112,6 +157,7 @@ impl Dir {
     }
 
     pub fn check_target(&self, name: &std::ffi::OsStr) -> io::Result<()> {
+        leaf(name)?;
         match fs::statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW) {
             Ok(stat) => {
                 if fs::FileType::from_raw_mode(stat.st_mode) != fs::FileType::RegularFile
@@ -171,8 +217,8 @@ impl Dir {
         self.0.sync_all()
     }
 
-    pub fn lock(&self) -> io::Result<File> {
-        self.check_writable()?;
+    pub fn lock(&self) -> io::Result<Lock> {
+        self.check_private()?;
         self.check_target(std::ffi::OsStr::new("lock"))?;
         let fd = fs::openat(
             &self.0,
@@ -181,7 +227,7 @@ impl Dir {
             Mode::from_raw_mode(0o600),
         )?;
         fs::flock(&fd, fs::FlockOperation::NonBlockingLockExclusive)?;
-        Ok(fd.into())
+        Ok(Lock(fd.into()))
     }
 }
 
@@ -192,7 +238,28 @@ pub struct Staged<'a> {
 }
 
 impl Staged<'_> {
+    /// Recheck after staging/fsync, immediately before replacement. This narrows
+    /// (but cannot eliminate) races with writers that ignore Chroma's lock.
+    pub fn commit_checked(
+        self,
+        destination: &std::ffi::OsStr,
+        expected: Option<&Snapshot>,
+    ) -> io::Result<()> {
+        self.dir.check_target(destination)?;
+        if self.dir.read(destination)?.as_ref() != expected {
+            return Err(io::Error::other(
+                "destination changed during operation; user changes preserved",
+            ));
+        }
+        if expected.is_none() {
+            self.commit_new(destination)
+        } else {
+            self.commit(destination)
+        }
+    }
+
     pub fn commit_new(mut self, destination: &std::ffi::OsStr) -> io::Result<()> {
+        leaf(destination)?;
         fs::renameat_with(
             &self.dir.0,
             &self.name,
@@ -226,6 +293,23 @@ pub fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }
+}
+
+pub fn read_private_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    let (dir, name) = match Dir::parent(path) {
+        Ok(pair) => pair,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    dir.check_private()?;
+    dir.check_target(&name)?;
+    let snapshot = dir.read(&name)?;
+    if snapshot.as_ref().is_some_and(|s| s.mode & 0o077 != 0) {
+        return Err(io::Error::other(
+            "state/backup file must not grant group/other permissions (chmod 600)",
+        ));
+    }
+    Ok(snapshot.map(|s| s.bytes))
 }
 
 pub fn write(path: &Path, bytes: &[u8], replace: bool) -> io::Result<()> {
@@ -280,5 +364,50 @@ mod tests {
             b"concurrent user edit"
         );
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn scoped_lock_unlocks_even_if_a_fork_inherits_the_descriptor() {
+        let root = tempfile::Builder::new()
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
+        let dir = Dir::open(root.path(), false).unwrap();
+        let lock = dir.lock().unwrap();
+        // dup shares the same open file description, just as fork does. No
+        // unsafe fork or timing-dependent subprocess is needed for this test.
+        let _inherited = rustix::io::dup(&lock.0).unwrap();
+        drop(lock);
+        let _next_operation = dir.lock().unwrap();
+    }
+
+    #[test]
+    fn descriptor_relative_public_methods_reject_non_leaf_names() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = Dir::open(root.path(), false).unwrap();
+        for name in ["../outside", "/absolute", "nested/file", ".", ".."] {
+            let name = std::ffi::OsStr::new(name);
+            assert!(dir.read(name).is_err());
+            assert!(dir.remove(name).is_err());
+            assert!(dir.stage(b"test", 0o600).unwrap().commit(name).is_err());
+            assert!(dir.stage(b"test", 0o600).unwrap().commit_new(name).is_err());
+        }
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn checked_replacement_preserves_edits_made_while_a_file_was_staged() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = Dir::open(root.path(), false).unwrap();
+        let name = std::ffi::OsStr::new("theme");
+        std::fs::write(root.path().join(name), b"managed").unwrap();
+        let expected = dir.read(name).unwrap().unwrap();
+        let staged = dir.stage(b"restored", expected.mode).unwrap();
+        std::fs::write(root.path().join(name), b"concurrent user edit").unwrap();
+        assert!(staged.commit_checked(name, Some(&expected)).is_err());
+        assert_eq!(
+            std::fs::read(root.path().join(name)).unwrap(),
+            b"concurrent user edit"
+        );
     }
 }
