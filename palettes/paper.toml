@@ -1,0 +1,15 @@
+name = "Paper"
+author = "Chroma contributors"
+
+[colors]
+background = "#F6F1E7"
+surface = "#EDE6D8"
+surface_alt = "#E1D8C6"
+foreground = "#302B25"
+muted = "#706456"
+primary = "#865635"
+secondary = "#4C6C70"
+border = "#B8AA95"
+error = "#A33D3D"
+warning = "#8A620A"
+success = "#4A703D"

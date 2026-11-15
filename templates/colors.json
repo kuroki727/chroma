@@ -1,0 +1,13 @@
+{
+  "background": "{{ background }}",
+  "surface": "{{ surface }}",
+  "surface_alt": "{{ surface_alt }}",
+  "foreground": "{{ foreground }}",
+  "muted": "{{ muted }}",
+  "primary": "{{ primary }}",
+  "secondary": "{{ secondary }}",
+  "border": "{{ border }}",
+  "error": "{{ error }}",
+  "warning": "{{ warning }}",
+  "success": "{{ success }}"
+}

@@ -1,0 +1,12 @@
+/* Import from style.css and reference the named colors explicitly. */
+@define-color chroma_background {{ background }};
+@define-color chroma_surface {{ surface }};
+@define-color chroma_surface_alt {{ surface_alt }};
+@define-color chroma_foreground {{ foreground }};
+@define-color chroma_muted {{ muted }};
+@define-color chroma_primary {{ primary }};
+@define-color chroma_secondary {{ secondary }};
+@define-color chroma_border {{ border }};
+@define-color chroma_error {{ error }};
+@define-color chroma_warning {{ warning }};
+@define-color chroma_success {{ success }};

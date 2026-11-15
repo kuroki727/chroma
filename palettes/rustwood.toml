@@ -1,0 +1,15 @@
+name = "Rustwood"
+author = "Kuroki"
+
+[colors]
+background = "#17130F"
+surface = "#241D17"
+surface_alt = "#30271F"
+foreground = "#E8DCC8"
+muted = "#A99B88"
+primary = "#B98252"
+secondary = "#73533B"
+border = "#574436"
+error = "#B85C50"
+warning = "#D6A45C"
+success = "#84946B"

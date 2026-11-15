@@ -1,0 +1,9 @@
+# Copy into ~/.config/chroma/adapters/dynamic_island.toml only after removing
+# the identically named section from config.toml. All fields are local/trusted.
+enabled = false
+config_path = "{xdg_config_home}/your-island/config"
+template = "templates/dynamic-island.txt"
+output = "generated/dynamic-island.theme"
+allow_overwrite = false
+# reload = ["/absolute/path/to/island-control", "reload-colors"]
+# reload_timeout_ms = 3000

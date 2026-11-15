@@ -1,0 +1,19 @@
+#!/bin/sh
+# Optional UI only. All file handling and palette application stay in Rust.
+# Usage: chroma-fuzzel [global chroma options, e.g. --config-dir /tmp/demo]
+set -eu
+if ! command -v chroma >/dev/null 2>&1 || ! command -v fuzzel >/dev/null 2>&1; then
+    echo "chroma-fuzzel: chroma and fuzzel must be on PATH" >&2
+    exit 1
+fi
+palettes=$(chroma "$@" list --names-only)
+if selection=$(printf '%s\n' "$palettes" | fuzzel --dmenu --prompt 'Chroma: '); then
+    [ -n "$selection" ] || exit 0
+    # Palette IDs are validated by the Rust CLI; argv is never evaluated.
+    exec chroma "$@" apply "$selection"
+else
+    status=$?
+    # Fuzzel exits 1 on cancellation. Preserve other failures.
+    [ "$status" -eq 1 ] && exit 0
+    exit "$status"
+fi

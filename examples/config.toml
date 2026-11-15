@@ -1,0 +1,45 @@
+[general]
+default_palette = "rustwood"
+# Commands only run after successful writes; off until explicitly enabled.
+auto_reload = false
+
+# Defaults generate files under Chroma's generated/ directory.
+# Manually add native includes to your application's config after review.
+[adapters.niri]
+enabled = false
+
+[adapters.waybar]
+enabled = false
+# Optional, opt-in (requires pkill):
+# reload = ["pkill", "-USR2", "-x", "waybar"]
+
+[adapters.fuzzel]
+enabled = false
+# REQUIRED before enabling: copy each existing RGBA alpha byte (decimal).
+# These examples mean opaque; use your existing values, e.g. 221 for DD.
+# [adapters.fuzzel.alpha]
+# background = 255
+# text = 255
+# match = 255
+# selection = 255
+# selection_text = 255
+# selection_match = 255
+# border = 255
+
+[adapters.kitty]
+enabled = false
+
+[adapters.foot]
+enabled = false
+
+[adapters.quickshell]
+enabled = false
+
+[adapters.dynamic_island]
+enabled = false
+template = "templates/dynamic-island.txt"
+output = "generated/dynamic-island.theme"
+# config_path is diagnostic only, never written.
+# config_path = "{xdg_config_home}/your-island/config"
+# allow_overwrite = true  # Explicit authorization for an existing output only.
+# reload = ["/absolute/path/to/your-island-control", "reload-colors"]

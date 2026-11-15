@@ -1,0 +1,11 @@
+// Generated colors only; niri >= 25.11, top-level include.
+layout {
+    focus-ring {
+        active-color "{{ primary }}"
+        inactive-color "{{ border }}"
+    }
+    border {
+        active-color "{{ primary }}"
+        inactive-color "{{ border }}"
+    }
+}
