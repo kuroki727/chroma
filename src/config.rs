@@ -140,6 +140,8 @@ impl Default for General {
 #[serde(default, deny_unknown_fields)]
 pub struct Adapter {
     pub enabled: bool,
+    /// Opt-in application-aware rendering from an existing read-only source.
+    pub desktop: Option<crate::integration::colors::Kind>,
     /// An existing application's config, for diagnostics only. Never edited.
     pub config_path: Option<String>,
     pub template: Option<String>,

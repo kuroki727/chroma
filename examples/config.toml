@@ -20,6 +20,9 @@ enabled = false
 # [adapters.fuzzel.alpha]
 # background = 255
 # text = 255
+# prompt = 255
+# placeholder = 255
+# input = 255
 # match = 255
 # selection = 255
 # selection_text = 255

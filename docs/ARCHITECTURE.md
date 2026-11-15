@@ -84,3 +84,17 @@ an image bomb. A mocked Fuzzel exercises the selector without opening a window.
 Native parser checks and version coverage are recorded separately in VALIDATION.md.
 They do not establish visual correctness, live reload behavior or power-failure
 resilience. The declared minimum Rust toolchain has not been tested separately.
+
+
+## v0.2 source-aware desktop adapters
+
+`integration::colors` implements restricted, lossless color-token replacement
+and native Niri/Kitty/GTK color outputs. `integration` plans separate review
+artifacts and disabled standalone adapter files, with its own private journal.
+It never mutates a desktop source. `integration::validate` uses temporary copies
+and bounded noninteractive Niri/Fuzzel validators during optional installation.
+The palette engine accepts initial ownership only for exact completed bundle
+snapshots and rejects pending integration recovery. Desktop activation stays
+manual; palette and integration rollback are separate operations.
+See [desktop guide](DESKTOP_INTEGRATION.md) for the precise supported grammar,
+source formats, watcher behavior and limitations.

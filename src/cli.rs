@@ -25,6 +25,25 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Preview or install a disabled desktop review bundle; never edits desktop configs.
+    Integrate {
+        #[arg(long, group = "integration_action")]
+        plan: bool,
+        #[arg(long, group = "integration_action")]
+        status: bool,
+        #[arg(long, group = "integration_action")]
+        apply: bool,
+        #[arg(long, group = "integration_action")]
+        rollback: bool,
+        /// Explicit approval to install the reviewed bundle. Desktop activation remains manual.
+        #[arg(long, requires = "apply")]
+        confirm: bool,
+        /// Read configs under this root; required with --config-dir for isolation.
+        #[arg(long)]
+        desktop_dir: Option<PathBuf>,
+        #[arg(long, default_value = "rustwood")]
+        palette: String,
+    },
     /// Create editable presets/templates and a disabled adapter configuration. Never overwrites.
     Init,
     /// List IDs (stable, one per line) or descriptive names.
@@ -69,7 +88,47 @@ pub enum Commands {
 }
 
 pub fn run(cli: Cli) -> Result<()> {
+    let isolated = cli.config_dir.is_some();
     let paths = Paths::discover(cli.config_dir, cli.state_dir)?;
+    if let Commands::Integrate {
+        plan: _,
+        status,
+        apply,
+        rollback,
+        confirm,
+        desktop_dir,
+        palette,
+    } = cli.command
+    {
+        if rollback {
+            return crate::integration::rollback(&paths);
+        }
+        if status {
+            return crate::integration::status(&paths);
+        }
+        crate::ensure!(
+            !isolated || desktop_dir.is_some(),
+            "--config-dir integration needs an explicit --desktop-dir to avoid inspecting the active desktop"
+        );
+        let desktop = desktop_dir.unwrap_or_else(|| paths.xdg_config.clone());
+        let palette = palette::load(&paths.config, &palette)?;
+        if apply {
+            crate::ensure!(
+                confirm,
+                "review integrate --plan first, then supply --apply --confirm to install the disabled review bundle"
+            );
+        }
+        let plan = crate::integration::plan(&paths, &desktop, &palette)?;
+        if apply {
+            let count = crate::integration::apply(&paths, plan, confirm)?;
+            println!(
+                "Installed {count} review artifact(s). Adapters remain disabled; desktop configuration was not modified. See docs/DESKTOP_INTEGRATION.md for manual activation."
+            );
+        } else {
+            crate::integration::print(&plan);
+        }
+        return Ok(());
+    }
     if matches!(cli.command, Commands::Init) {
         return init(&paths);
     }
@@ -82,6 +141,7 @@ pub fn run(cli: Cli) -> Result<()> {
     }
     let config = Config::load(&paths)?;
     match cli.command {
+        Commands::Integrate { .. } => unreachable!(),
         Commands::Init => unreachable!(),
         Commands::List { names_only } => {
             for (id, palette) in palette::list(&paths.config)? {
@@ -237,7 +297,9 @@ fn doctor(paths: &Paths, config: &Config) -> Result<()> {
         paths.state.display(),
         paths.cache.display()
     );
-    for program in ["niri", "waybar", "fuzzel", "kitty", "foot", "qs"] {
+    for program in [
+        "niri", "waybar", "fuzzel", "kitty", "foot", "island", "swaylock",
+    ] {
         println!(
             "{program:<12} {}",
             if adapters::reload::available(program) {
@@ -248,6 +310,11 @@ fn doctor(paths: &Paths, config: &Config) -> Result<()> {
         );
     }
     let palette = palette::load(&paths.config, &config.general.default_palette)?;
+    if !config.adapters.values().any(|adapter| adapter.enabled) {
+        println!(
+            "No enabled adapters: palette application currently changes no files. Run chroma integrate --plan for application-aware setup; all generated adapter examples require explicit enabling."
+        );
+    }
     let mut issues = Vec::new();
     if safe_fs::read_optional(&paths.config.join("config.toml"))?.is_none() {
         issues.push("config.toml is missing; run init to create disabled examples".into());
@@ -307,7 +374,7 @@ fn doctor(paths: &Paths, config: &Config) -> Result<()> {
         "Imports/application versions are not auto-detected. Niri needs >=25.11; Fuzzel includes need >=1.10."
     );
     println!(
-        "Quickshell needs the FileView example; Foot takes effect in new processes. GTK/libadwaita and Qt have no universal palette API; no automatic integration."
+        "Island is a standalone application; use integrate --plan for its dedicated adapter. Foot takes effect in new processes. GTK/libadwaita and Qt have no universal palette API."
     );
     for issue in &issues {
         println!("Issue: {issue}");

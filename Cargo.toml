@@ -1,6 +1,6 @@
 [package]
 name = "chroma"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "A local, template-driven Linux desktop color engine"
@@ -13,8 +13,6 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rustix = { version = "1.1.6", features = ["fs", "process"] }
-
-[dev-dependencies]
 tempfile = "3"
 
 [profile.release]

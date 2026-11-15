@@ -109,7 +109,7 @@ Wallpaper opening is nonblocking so FIFOs/devices are rejected without waiting
 for a writer. Only regular PNG/JPEG inputs are accepted. The compressed input is
 read through a 64 MiB bound before decoding, rather than trusting its initial file
 length. Headers must advertise nonzero dimensions, at most 16384 per side,
-**8,388,608 pixels**, and at most **64 MiB decoded output**. This supports 3840×2160;
+**16,777,216 pixels**, and at most **64 MiB decoded output**. This supports 5120×2880 RGB wallpapers;
 larger wallpapers need offline resizing. Sampling is bounded to 128×128 and
 clustering to 12 centers/24 iterations.
 
@@ -145,3 +145,14 @@ An interrupted apply/rollback retains a pending record and blocks new applies.
 Temporary `.chroma-*.tmp` files or unreferenced completed backups can remain after
 a crash; no background process cleans them up. Never remove a referenced backup
 while recovery is pending.
+
+
+## v0.2 integration bundles
+
+See [desktop integration](DESKTOP_INTEGRATION.md) for the separate private journal,
+fixed artifact allowlist, exact first-apply ownership, disabled defaults and
+conflict-preserving rollback. Integration never modifies desktop source files.
+Native Niri/Fuzzel validators operate only on temporary copies with a three-second
+direct-child timeout. Island/GTK offline harnesses never launch desktop processes.
+Manual imports can connect generated files to application watchers; disconnect
+those imports before removing bundles. No Quickshell dependency was added.

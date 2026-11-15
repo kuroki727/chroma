@@ -17,6 +17,7 @@ pub struct Plan {
 
 pub fn plan(paths: &Paths, config: &Config, palette: &Palette, state: &State) -> Result<Plan> {
     palette.validate()?;
+    crate::integration::ensure_ready(paths)?;
     ensure!(
         state.pending.is_none(),
         "an interrupted operation needs recovery: run chroma rollback"
@@ -66,7 +67,8 @@ pub fn plan(paths: &Paths, config: &Config, palette: &Palette, state: &State) ->
             .and_then(|a| a.files.get(&output.path));
         if before.is_some() && before.as_ref() != managed {
             ensure!(
-                output.allow_overwrite,
+                output.allow_overwrite
+                    || crate::integration::owns(paths, &output.path, before.as_ref())?,
                 "adapter {name}: existing unmanaged or edited file {}; set allow_overwrite = true in trusted local adapter configuration to authorize replacement",
                 output.path.display()
             );
@@ -86,7 +88,7 @@ pub fn plan(paths: &Paths, config: &Config, palette: &Palette, state: &State) ->
     }
     ensure!(
         !outputs.is_empty(),
-        "no enabled adapters; run chroma init, then enable an adapter in config.toml"
+        "no enabled adapters; nothing applied. Preview your desktop with chroma integrate --plan, or run chroma init and explicitly enable an adapter. Integration bundles also start disabled; see docs/DESKTOP_INTEGRATION.md"
     );
     Ok(Plan {
         outputs,

@@ -131,7 +131,7 @@ fn oversized_png_headers_are_rejected_before_decoded_allocation() {
     let original = std::fs::read(&path).unwrap();
     // Rewrite only IHDR and its CRC. No large pixel buffers or image bomb data
     // are created in tests; the decoder must reject the advertised dimensions.
-    for (width, height) in [(4096_u32, 4096_u32), (16385, 1)] {
+    for (width, height) in [(8192_u32, 8192_u32), (16385, 1)] {
         let mut bytes = original.clone();
         bytes[16..20].copy_from_slice(&width.to_be_bytes());
         bytes[20..24].copy_from_slice(&height.to_be_bytes());
@@ -168,7 +168,7 @@ fn compressed_input_size_is_bounded_without_reading_a_large_fixture() {
 }
 
 #[test]
-fn an_image_at_the_pixel_budget_is_still_supported() {
+fn an_image_within_the_pixel_budget_is_still_supported() {
     let root = tempdir().unwrap();
     let path = root.path().join("large-valid.png");
     image::GrayImage::from_pixel(4096, 2048, image::Luma([128]))
@@ -181,5 +181,49 @@ fn an_image_at_the_pixel_budget_is_still_supported() {
             .foreground
             .contrast(palette.colors.background)
             >= 4.5
+    );
+}
+
+#[test]
+fn five_k_png_and_jpeg_wallpapers_fit_the_unchanged_decoded_byte_budget() {
+    let root = tempdir().unwrap();
+    // Same dimensions as foggy_forest.jpg; no private wallpaper is a fixture.
+    for ext in ["png", "jpg"] {
+        let path = root.path().join(format!("five-k.{ext}"));
+        RgbImage::from_pixel(5120, 2880, Rgb([52, 94, 73]))
+            .save(&path)
+            .unwrap();
+        let palette = generate(&path, Mode::Dark, "5K wallpaper").unwrap();
+        palette.validate().unwrap();
+    }
+}
+
+#[test]
+fn five_k_sixteen_bit_rgba_headers_still_hit_the_decoded_byte_limit() {
+    let root = tempdir().unwrap();
+    let path = root.path().join("sixteen-bit.png");
+    image::ImageBuffer::<image::Rgba<u16>, Vec<u16>>::from_pixel(
+        1,
+        1,
+        image::Rgba([0, 0, 0, 65535]),
+    )
+    .save(&path)
+    .unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[16..20].copy_from_slice(&5120_u32.to_be_bytes());
+    bytes[20..24].copy_from_slice(&2880_u32.to_be_bytes());
+    let mut crc = !0_u32;
+    for byte in &bytes[12..29] {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb88320_u32 & 0_u32.wrapping_sub(crc & 1));
+        }
+    }
+    bytes[29..33].copy_from_slice(&(!crc).to_be_bytes());
+    std::fs::write(&path, bytes).unwrap();
+    let error = format!("{:#}", generate(&path, Mode::Dark, "Bounded").unwrap_err());
+    assert!(
+        error.contains("limit") || error.contains("decoded image exceeds"),
+        "{error}"
     );
 }

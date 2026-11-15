@@ -3,7 +3,8 @@
 A local color engine for Linux desktops, written in Rust. Apply one semantic
 palette to separate application theme files, or derive a palette from a PNG/JPEG
 wallpaper. No daemon, network service, wallpaper setter, or desktop session is
-required. MIT licensed; version 0.1 is a tested MVP, not a production-readiness claim.
+required. MIT licensed. Version 0.2 adds application-aware review bundles with manual activation.
+See [desktop integration and limitations](docs/DESKTOP_INTEGRATION.md).
 
 Chroma **never edits your application's main configuration**. You choose adapters,
 review generated files, and add imports yourself. Every shipped adapter starts
@@ -77,6 +78,10 @@ chroma rollback --no-reload          # Recovery even with a broken config
 chroma validate                     # All available palettes and configured templates
 chroma validate rustwood
 chroma doctor
+chroma integrate --plan              # Read-only desktop detection and exact proposals
+chroma integrate --status            # Review bundle status, no writes
+chroma integrate --apply --confirm   # Optional: install disabled review artifacts only
+chroma integrate --rollback          # Remove unchanged bundle artifacts only
 ```
 
 `generate` saves a palette; it never applies a theme or changes wallpaper.
@@ -237,7 +242,7 @@ same toolchain; floating-point behavior across future algorithm versions is not
 a stable palette format guarantee.
 
 Limits: actual compressed input <=64 MiB, dimensions <=16384 per side, at most
-8,388,608 pixels (including 3840×2160), and <=64 MiB decoded output. These checks
+16,777,216 pixels (including 5120×2880 RGB wallpapers), and <=64 MiB decoded output. These checks
 precede pixel decoding. FIFO/device inputs are rejected without blocking. The
 image is decoded before thumbnailing, so large images still cost decode time and
 memory. Codec-internal allocations and compressed buffers add overhead; this is
@@ -310,7 +315,8 @@ paths below assume `~/.config/chroma`; use your real absolute path when XDG diff
 | Kitty | `generated/kitty.conf` | Native include; new process or manual config reload |
 | Foot >=1.26 | `generated/foot.ini` | Native include, `colors-dark` default slot; new process |
 | Quickshell | `generated/colors.json` | Add the FileView consumer; no shell reload command required |
-| Dynamic Island | User-specified | Generic adapter works; real syntax/consumer/reload must be supplied |
+| Standalone Island | `generated/desktop-island.css` via integration bundle | Native `-s` stylesheet; dedicated color mapping; manual activation |
+| Swaylock-effects | Separate generated config | Color states mapped; invalid shell syntax requires manual correction |
 | GTK / Qt | No automatic adapter | See limitations below |
 
 ### Niri
@@ -322,7 +328,7 @@ conflicting layout colors:
 include "/absolute/path/to/chroma/generated/niri.kdl"
 ```
 
-The template only sets focus-ring/border colors; it does not turn borders on or
+The template only sets border active/inactive/urgent colors and background; it does not turn borders on or
 change width. Niri merges included layout properties and watches included files
 from version 25.11. Older versions have no supported automatic integration here.
 Validate the composed config using `niri validate -c /path/to/config.kdl` before
@@ -362,6 +368,9 @@ enabled = true
 [adapters.fuzzel.alpha]
 background = 221       # DD; use YOUR existing alpha, not this illustrative value
 text = 255            # FF
+prompt = 255
+placeholder = 255
+input = 255
 match = 255
 selection = 255
 selection_text = 255
@@ -369,7 +378,7 @@ selection_match = 255
 border = 255
 ```
 
-All seven values are required by the default template. You can use a reduced
+All ten values are required by the default template. You can use a reduced
 custom template to manage fewer properties. The palette never controls alpha.
 Then add in the main/default section of `fuzzel.ini` (before `[colors]`):
 
@@ -409,7 +418,7 @@ the [upstream manual](https://codeberg.org/dnkl/foot/src/branch/master/doc/foot.
 the same man-page source was inspected via its
 [source mirror](https://github.com/clearcmos/foot/blob/main/doc/foot.ini.5.scd).
 
-### Quickshell and custom Dynamic Island
+### Quickshell (independent optional adapter)
 
 Quickshell has no universal theme file. The adapter generates JSON and
 [examples/quickshell/ChromaColors.qml](examples/quickshell/ChromaColors.qml) uses
@@ -422,16 +431,15 @@ singletons, and it does not invoke `qs reload`. The
 [FileView documentation](https://quickshell.org/docs/v0.2.1/types/Quickshell.Io/FileView/)
 defines this watcher pattern.
 
-Dynamic Island's configuration syntax is intentionally **not assumed**.
-[The example adapter](examples/dynamic-island-adapter.toml) and illustrative plain
-text template show the contract: diagnostic `config_path`, user-defined
-`template`, separate `output`, and optional argv `reload`. Replace the example
-template with the real format and arrange for your app to consume the generated
-theme. Chroma does not inspect or overwrite your existing Island config. If an
-app has no include/theme support, create a separate complete config from an
-explicitly maintained local template and point the app to it yourself. Chroma
-cannot merge arbitrary configuration languages or preserve unknown properties
-inside a file it has been asked to replace.
+### Standalone Dynamic Island
+
+The user's Island is an independent C++ application, unrelated to Quickshell.
+`chroma integrate --plan` uses its verified CSS format, maps existing color
+literals, preserves non-color declarations and alpha, and proposes a separate
+stylesheet for its native `-s` option. It never changes behavior JSONC. There is no
+CSS import support in the inspected parser. See the [dedicated integration guide](docs/DESKTOP_INTEGRATION.md)
+for validation, trusted optional reload configuration and manual setup. The older
+generic text example remains available for other custom applications.
 
 ### GTK and Qt limitations
 
@@ -538,7 +546,7 @@ Errors carry operation, adapter and path context using `anyhow`. The library
 forbids unsafe Rust; Linux filesystem primitives are supplied by `rustix`.
 
 The build uses clap, serde/TOML, image (PNG/JPEG only), anyhow and rustix.
-`tempfile` is test-only. There is no embedded interpreter or GUI toolkit.
+`tempfile` also isolates noninteractive Niri/Fuzzel validators during optional bundle installation. There is no embedded interpreter or GUI toolkit.
 
 ```sh
 cargo fmt --check

@@ -38,6 +38,9 @@ pub const BUILTINS: &[(&str, &str, &str)] = &[
 pub const FUZ_ALPHA: &[&str] = &[
     "background",
     "text",
+    "prompt",
+    "placeholder",
+    "input",
     "match",
     "selection",
     "selection_text",
@@ -72,6 +75,34 @@ pub fn output_path(name: &str, adapter: &Adapter, paths: &Paths) -> Result<PathB
 }
 
 pub fn render(name: &str, adapter: &Adapter, paths: &Paths, palette: &Palette) -> Result<Output> {
+    if let Some(kind) = adapter.desktop {
+        ensure!(
+            adapter.template.is_none() && adapter.alpha.is_empty(),
+            "desktop adapters cannot override templates or alpha"
+        );
+        let source = paths.expand(
+            adapter
+                .config_path
+                .as_deref()
+                .context("desktop adapter needs config_path")?,
+        )?;
+        let path = output_path(name, adapter, paths)?;
+        ensure!(
+            path.starts_with(paths.config.join("generated")) && path != source,
+            "desktop adapters write only separate generated files"
+        );
+        let bytes = safe_fs::read_optional(&source)?.context("desktop source is missing")?;
+        let rendered =
+            crate::integration::colors::render(kind, std::str::from_utf8(&bytes)?, palette)?;
+        return Ok(Output {
+            name: name.into(),
+            path,
+            bytes: rendered.into_bytes(),
+            allow_overwrite: adapter.allow_overwrite,
+            reload: adapter.reload.clone(),
+            timeout_ms: adapter.reload_timeout_ms.unwrap_or(3000),
+        });
+    }
     let builtin = BUILTINS.iter().find(|(id, _, _)| *id == name);
     let source = if let Some(file) = &adapter.template {
         let path = paths.expand(file)?;
