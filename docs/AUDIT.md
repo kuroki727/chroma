@@ -1,3 +1,11 @@
+# Final v0.2 audit
+
+The complete PR #3 diff, inherited integration work, confirmed defects and final
+verification are recorded in [VALIDATION.md](../VALIDATION.md#final-pr-3-audit--v02-2026-11-16).
+The fixes preserve the original transaction system and version-1 recovery schema.
+
+---
+
 # v0.1 pre-merge audit
 
 Baseline: branch `feat/initial-implementation`, commit `05cc8b1`. The working tree

@@ -30,6 +30,7 @@ pub struct Plan {
     pub reports: Vec<String>,
     /// Inputs checked again immediately before committing the bundle.
     pub inputs: Vec<(PathBuf, Vec<u8>)>,
+    pub guard: safe_fs::Inputs,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,9 +62,10 @@ fn load(paths: &Paths) -> Result<Option<Journal>> {
             destinations.insert(&entry.path),
             "duplicate integration destination"
         );
-        if let Some(before) = &entry.before {
-            before.validate()?;
-        }
+        ensure!(
+            entry.before.is_none() && entry.after.mode == 0o600,
+            "invalid integration creation snapshot"
+        );
         entry.after.validate()?;
     }
     Ok(Some(journal))
@@ -126,11 +128,16 @@ fn add(plan: &mut Plan, path: PathBuf, bytes: Vec<u8>) -> Result<()> {
 }
 
 pub fn plan(paths: &Paths, desktop: &Path, palette: &crate::palette::Palette) -> Result<Plan> {
+    crate::adapters::discovery::check_root(desktop)?;
     ensure!(
-        desktop.is_absolute(),
-        "desktop config root must be absolute"
+        crate::engine::State::load(&paths.state)?.pending.is_none(),
+        "pending palette transaction; run chroma rollback first"
     );
-    let mut plan = Plan::default();
+    let config = crate::config::Config::load(paths)?;
+    let mut plan = Plan {
+        guard: config.inputs.clone(),
+        ..Plan::default()
+    };
     if let Some(journal) = load(paths)? {
         ensure!(
             journal.complete && !journal.restoring,
@@ -142,7 +149,7 @@ pub fn plan(paths: &Paths, desktop: &Path, palette: &crate::palette::Palette) ->
     }
     for kind in Kind::ALL {
         let source_path = desktop.join(kind.relative());
-        let Some(bytes) = safe_fs::read_optional(&source_path)? else {
+        let Some(bytes) = plan.guard.read(&source_path)? else {
             plan.reports.push(format!(
                 "{}: missing {}; skipped",
                 kind.id(),
@@ -208,7 +215,6 @@ pub fn plan(paths: &Paths, desktop: &Path, palette: &crate::palette::Palette) ->
             }
         };
         // A named adapter must not shadow a main-config entry.
-        let config = crate::config::Config::load(paths)?;
         ensure!(
             !config
                 .adapters
@@ -287,16 +293,30 @@ fn activation(kind: Kind) -> &'static str {
     }
 }
 
+// Preview retains exact artifact bytes in the plan, but never emits source
+// control sequences to a terminal (e.g. OSC clipboard writes in CSS comments).
+fn terminal_safe(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            if c.is_control() && !matches!(c, '\n' | '\t') {
+                c.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
+}
+
 pub fn print(plan: &Plan) {
     for report in &plan.reports {
-        println!("{report}");
+        println!("{}", terminal_safe(report));
     }
     for change in &plan.changes {
         println!(
             "\n+++ proposed {} (new, private file; {} bytes)\n{}",
             change.path.display(),
             change.after.bytes.len(),
-            String::from_utf8_lossy(&change.after.bytes)
+            terminal_safe(&String::from_utf8_lossy(&change.after.bytes))
         );
     }
     println!(
@@ -373,6 +393,13 @@ pub fn apply(paths: &Paths, plan: Plan, confirmed: bool) -> Result<usize> {
         load(paths)?.is_none(),
         "integration already exists; use --status or --rollback"
     );
+    plan.guard
+        .check()
+        .context("source changed or configuration changed during planning; plan again")?;
+    ensure!(
+        crate::engine::State::load(&paths.state)?.pending.is_none(),
+        "pending palette transaction; run chroma rollback first"
+    );
     for (path, expected) in &plan.inputs {
         ensure!(
             safe_fs::read_optional(path)?.as_deref() == Some(expected),
@@ -394,6 +421,9 @@ pub fn apply(paths: &Paths, plan: Plan, confirmed: bool) -> Result<usize> {
             validate::generated(kind, source, &entry.after.bytes)?;
         }
     }
+    // Native validation may take seconds; recheck its inputs before any journal.
+    plan.guard.check()?;
+    state_dir.check_path(&paths.state)?;
     let journal = Journal {
         version: 1,
         complete: false,
@@ -402,7 +432,9 @@ pub fn apply(paths: &Paths, plan: Plan, confirmed: bool) -> Result<usize> {
     };
     crate::engine::backup::save(&journal_path(paths), &journal, false)?;
     // Journal is durable before any artifact. On interruption --rollback is retryable.
-    write_bundle(paths, journal, |_| Ok(()))
+    write_bundle(paths, journal, |_| Ok(())).context(
+        "integration installation incomplete; run chroma integrate --rollback; journal retained",
+    )
 }
 
 fn write_bundle(
@@ -428,18 +460,23 @@ fn write_bundle(
 pub fn rollback(paths: &Paths) -> Result<()> {
     let state_dir = Dir::open(&paths.state, false).context("no integration to roll back")?;
     let _lock = state_dir.lock()?;
+    ensure!(
+        crate::engine::State::load(&paths.state)?.pending.is_none(),
+        "pending palette transaction; run chroma rollback first"
+    );
     let mut journal = load(paths)?.context("no integration to roll back")?;
     journal.restoring = true;
     crate::engine::backup::save(&journal_path(paths), &journal, true)?;
     let mut conflicts = Vec::new();
     for entry in journal.changes.iter().rev() {
         let result = (|| -> Result<()> {
-            let actual = match Dir::parent(&entry.path) {
+            let (directory, actual) = match Dir::parent(&entry.path) {
                 Ok((dir, name)) => {
                     dir.check_target(&name)?;
-                    dir.read(&name)?
+                    let actual = dir.read(&name)?;
+                    (Some((dir, name)), actual)
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, None),
                 Err(e) => return Err(e.into()),
             };
             if actual == entry.before {
@@ -449,7 +486,8 @@ pub fn rollback(paths: &Paths) -> Result<()> {
                 actual.as_ref() == Some(&entry.after),
                 "changed outside integration; preserve it and resolve manually (palette rollback may be needed first)"
             );
-            let (dir, name) = Dir::parent(&entry.path)?;
+            let (dir, name) = directory.context("artifact directory disappeared")?;
+            dir.check_path(entry.path.parent().context("missing artifact parent")?)?;
             if let Some(before) = &entry.before {
                 dir.stage(&before.bytes, before.mode)?
                     .commit_checked(&name, Some(&entry.after))?;
@@ -475,6 +513,21 @@ pub fn rollback(paths: &Paths) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_escapes_source_terminal_sequences_without_changing_artifacts() {
+        let source = "/* \u{1b}]52;c;dGVzdA==\u{7} */\nisland { background: #123456; }";
+        let rendered = colors::render(
+            Kind::Island,
+            source,
+            &crate::palette::presets::get("nord").unwrap(),
+        )
+        .unwrap();
+        assert!(rendered.contains('\u{1b}'));
+        let preview = terminal_safe(&rendered);
+        assert!(!preview.contains(['\u{1b}', '\u{7}']));
+        assert!(preview.contains("\\u{1b}"));
+    }
 
     #[test]
     fn interrupted_bundle_is_recoverable_at_every_write_boundary() {

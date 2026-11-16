@@ -178,3 +178,26 @@ unrelated application settings by themselves; connecting native imports and
 choosing which existing colors to replace requires user review and separate
 application backups. Configuration edits outside Chroma after setup may block a
 later rollback; the expected snapshots remain in private transaction records.
+
+
+## Final v0.2 audit hardening
+
+Configuration loading records main/standalone TOML snapshots and descriptor-read
+adapter directory membership. Planning records the templates, inspected sources,
+selected local palette and integration journal actually used. Inputs are
+rechecked before replacement, including intervening mode changes and file
+creation/removal. Output directories are reopened with no-follow and compared
+with held device/inode identities; swapped paths fail instead of committing to
+an obsolete directory. The final kernel compare/rename window with an
+uncooperative same-user writer remains a documented limitation.
+
+Manifest replacement compares the expected transaction state before staging and
+rechecks its snapshot before rename. External state changes are preserved, even
+when that prevents automatic recovery from clearing a pending record. Durable
+backups remain available for manual resolution. Rollback retains the descriptor
+used for target inspection. No new transaction system or on-disk schema was added.
+
+Dry-run and commit validate the same serialized backup payload and snapshot size
+limits. Review output escapes terminal control sequences in source text. Native
+review validation refuses unchecked include chains; conservative KDL cases need
+manual composed validation rather than following source-specified paths.

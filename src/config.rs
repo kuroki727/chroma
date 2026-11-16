@@ -160,39 +160,37 @@ pub struct Adapter {
 pub struct Config {
     pub general: General,
     pub adapters: BTreeMap<String, Adapter>,
+    /// Read provenance, not part of the configuration format.
+    #[serde(skip)]
+    pub inputs: safe_fs::Inputs,
 }
 
 impl Config {
     pub fn load(paths: &Paths) -> Result<Self> {
         let path = paths.config.join("config.toml");
-        let mut config: Self = match safe_fs::read_optional(&path)? {
+        let mut inputs = safe_fs::Inputs::default();
+        let mut config: Self = match inputs.read(&path)? {
             Some(bytes) => toml::from_str(std::str::from_utf8(&bytes)?)
                 .with_context(|| path.display().to_string())?,
             None => Self::default(),
         };
-        match std::fs::read_dir(paths.config.join("adapters")) {
-            Ok(entries) => {
-                for entry in entries {
-                    let path = entry?.path();
-                    if path.extension().is_some_and(|ext| ext == "toml") {
-                        let name = path
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .context("non-UTF8 adapter filename")?;
-                        let bytes =
-                            safe_fs::read_optional(&path)?.context("adapter disappeared")?;
-                        let adapter = toml::from_str(std::str::from_utf8(&bytes)?)
-                            .with_context(|| path.display().to_string())?;
-                        ensure!(
-                            config.adapters.insert(name.to_string(), adapter).is_none(),
-                            "adapter {name} is defined twice"
-                        );
-                    }
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e).context("reading adapters directory"),
+        let directory = paths.config.join("adapters");
+        for filename in inputs.adapters(&directory)? {
+            let path = directory.join(filename);
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .context("non-UTF8 adapter filename")?;
+            let bytes = inputs.read(&path)?.context("adapter disappeared")?;
+            let adapter = toml::from_str(std::str::from_utf8(&bytes)?)
+                .with_context(|| path.display().to_string())?;
+            ensure!(
+                config.adapters.insert(name.to_string(), adapter).is_none(),
+                "adapter {name} is defined twice"
+            );
         }
+        inputs.check()?;
+        config.inputs = inputs;
         palette::valid_id(&config.general.default_palette)?;
         for (name, adapter) in &config.adapters {
             palette::valid_id(name)?;

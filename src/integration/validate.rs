@@ -28,6 +28,18 @@ pub fn generated(kind: Kind, source: &[u8], generated: &[u8]) -> Result<()> {
     if !matches!(kind, Kind::Niri | Kind::Fuzzel) {
         return Ok(());
     }
+    if kind == Kind::Niri {
+        ensure!(
+            !kdl_has_include(std::str::from_utf8(source)?)?,
+            "existing Niri includes require manual composed validation"
+        );
+    } else {
+        let ini = crate::adapters::discovery::ini(std::str::from_utf8(generated)?)?;
+        ensure!(
+            !ini.keys().any(|(_, key)| key == "include"),
+            "Fuzzel include chains require manual validation; no external files followed"
+        );
+    }
     let program = if kind == Kind::Niri { "niri" } else { "fuzzel" };
     if !crate::adapters::reload::available(program) {
         ensure!(
@@ -43,14 +55,6 @@ pub fn generated(kind: Kind, source: &[u8], generated: &[u8]) -> Result<()> {
         let colors = temp.path().join("colors.kdl");
         std::fs::write(&colors, generated)?;
         let source = std::str::from_utf8(source)?;
-        // Relative includes would resolve differently in the temporary directory.
-        // Refuse them instead of validating a different effective configuration.
-        ensure!(
-            !source
-                .lines()
-                .any(|l| l.trim_start().starts_with("include ")),
-            "existing Niri includes require manual composed validation"
-        );
         std::fs::write(
             &file,
             format!("{source}\ninclude \"{}\"\n", colors.display()),
@@ -73,4 +77,102 @@ pub fn generated(kind: Kind, source: &[u8], generated: &[u8]) -> Result<()> {
         anyhow::anyhow!("{program} isolated validation failed; no bundle installed: {error:#}")
     })?;
     Ok(())
+}
+
+/// Identify bare include tokens outside KDL comments/strings. Include spellings
+/// separated by tabs, newlines or comments must not escape offline validation.
+fn kdl_has_include(source: &str) -> Result<bool> {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"//") {
+            i += source[i..].find('\n').unwrap_or(bytes.len() - i);
+        } else if bytes[i..].starts_with(b"/*") {
+            let mut depth = 1;
+            i += 2;
+            while i < bytes.len() && depth > 0 {
+                if bytes[i..].starts_with(b"/*") {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i..].starts_with(b"*/") {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            ensure!(depth == 0, "unterminated KDL comment");
+        } else if bytes[i] == b'"' {
+            ensure!(
+                i == 0 || bytes[i - 1] != b'#',
+                "raw KDL strings require manual composed validation"
+            );
+            ensure!(
+                !bytes[i..].starts_with(b"\"\"\""),
+                "multiline KDL strings require manual composed validation"
+            );
+            i += 1;
+            let start = i;
+            let mut closed = false;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    crate::bail!("escaped KDL strings require manual composed validation");
+                } else if bytes[i] == b'"' {
+                    i += 1;
+                    closed = true;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+            ensure!(closed, "unterminated KDL string");
+            if &bytes[start..i - 1] == b"include" {
+                return Ok(true);
+            }
+        } else if bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if &bytes[start..i] == b"include" {
+                return Ok(true);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn native_validation_refuses_include_chains_before_invoking_parsers() {
+        for source in [
+            "include\t\"/untrusted/config\"",
+            "include/*comment*/\"/untrusted/config\"",
+            "include\n\"/untrusted/config\"",
+            "\"include\" \"/untrusted/config\"",
+        ] {
+            assert!(
+                generated(Kind::Niri, source.as_bytes(), b"layout {}\n")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("includes require manual")
+            );
+        }
+        assert!(
+            !kdl_has_include(
+                "// include \"ignored\"\nlayout {} /* include ignored */\nbinds { spawn \"foot\"; }"
+            )
+            .unwrap()
+        );
+        assert!(
+            generated(Kind::Fuzzel, b"", b"[main]\ninclude=/untrusted/config\n")
+                .unwrap_err()
+                .to_string()
+                .contains("include chains")
+        );
+    }
 }

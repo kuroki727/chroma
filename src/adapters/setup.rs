@@ -26,8 +26,9 @@ pub fn configure(
     discovery::check_root(desktop)?;
     engine_ready(paths)?;
     let config = Config::load(paths)?;
+    let mut inputs = config.inputs.clone();
     let standalone = paths.config.join("adapters").join(format!("{name}.toml"));
-    let path = if safe_fs::read_optional(&standalone)?.is_some() {
+    let path = if inputs.read(&standalone)?.is_some() {
         standalone
     } else {
         paths.config.join("config.toml")
@@ -60,6 +61,7 @@ pub fn configure(
         );
         if let Some((_, relative)) = discovery::APPLICATIONS.iter().find(|(id, _)| *id == name) {
             let main = desktop.join(relative);
+            inputs.read(&main)?;
             let (status, reason) = discovery::inspect(paths, name, &main)?;
             ensure!(status != discovery::Status::Unsupported, "{name}: {reason}");
             println!("{name}: {}: {reason}", status.label());
@@ -77,8 +79,15 @@ pub fn configure(
         if name == "fuzzel" && adapter.template.is_none() {
             fill_alpha(&mut adapter, paths, opaque)?;
         }
+        inputs.read(
+            &paths
+                .config
+                .join("palettes")
+                .join(format!("{}.toml", config.general.default_palette)),
+        )?;
         let selected = palette::load(&paths.config, &config.general.default_palette)?;
         let output = adapters::render(name, &adapter, paths, &selected)?;
+        inputs.extend(&output.inputs)?;
         let (output_dir, output_name) =
             Dir::parent(&output.path).context("run chroma init to create generated/")?;
         output_dir.check_writable()?;
@@ -109,6 +118,7 @@ pub fn configure(
     } else {
         let _: Config = toml::from_str(std::str::from_utf8(&bytes)?)?;
     }
+    inputs.check()?;
     println!(
         "{} {} in {}\n{}",
         if enabled { "Enable" } else { "Disable" },
@@ -140,6 +150,7 @@ pub fn configure(
         entries: vec![entry],
         dirs: vec![(dir, file)],
         reports: Vec::new(),
+        inputs,
     };
     let state_dir = Dir::open(&paths.state, true)?;
     let _lock = state_dir.lock()?;
@@ -235,6 +246,7 @@ mod tests {
         let plan = apply::Plan {
             outputs: vec![],
             reports: vec![],
+            inputs: safe_fs::Inputs::default(),
             dirs: vec![(dir, file)],
             entries: vec![Entry {
                 adapter: "chroma-setup".into(),

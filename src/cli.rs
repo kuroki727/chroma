@@ -236,7 +236,7 @@ pub fn run(cli: Cli) -> Result<()> {
         println!("Restored previous managed files and palette state.");
         return Ok(());
     }
-    let config = Config::load(&paths)?;
+    let mut config = Config::load(&paths)?;
     match cli.command {
         Commands::Integrate { .. } | Commands::Adapters { .. } => unreachable!(),
         Commands::Init => unreachable!(),
@@ -273,6 +273,9 @@ pub fn run(cli: Cli) -> Result<()> {
             dry_run,
         } => {
             let id = palette.unwrap_or_else(|| config.general.default_palette.clone());
+            config
+                .inputs
+                .read(&paths.config.join("palettes").join(format!("{id}.toml")))?;
             let palette = palette::load(&paths.config, &id)?;
             if dry_run {
                 println!("Selected theme: {} ({id})", palette.name);
@@ -281,7 +284,9 @@ pub fn run(cli: Cli) -> Result<()> {
                         println!("Skipped {name}: disabled");
                     }
                 }
-                let plan = apply::plan(&paths, &config, &palette, &State::load(&paths.state)?)?;
+                let state = State::load(&paths.state)?;
+                let plan = apply::plan(&paths, &config, &palette, &state)?;
+                apply::preview_transaction(&plan, &state, &id, &palette)?;
                 for (output, entry) in plan.outputs.iter().zip(&plan.entries) {
                     let action = match &entry.before {
                         None => "create",

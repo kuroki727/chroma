@@ -1,3 +1,67 @@
+# Final PR #3 audit — v0.2, 2026-11-16
+
+The complete diff against origin/main (including the inherited review-bundle
+commit) was audited. No live desktop configuration was modified, no reload or
+lock-screen command was run, and native checks used temporary XDG roots.
+
+Confirmed defects fixed:
+
+- Planning inputs were not retained through commit. Added byte/mode snapshots for
+  config/templates/sources, adapter directory membership, integration journal and
+  selected local palette; output directory identity and expected manifest state
+  are rechecked. External state changes survive failed recovery with backups
+  retained. Bundle setup is blocked while palette recovery is pending.
+- Offline native validation could follow Fuzzel includes and Niri includes using
+  tabs/comments/quoted names. Include chains are now refused before invocation;
+  conservative KDL string cases are left for manual validation.
+- A legitimate v0.1 custom adapter named chroma-setup collided with the reserved
+  setup entry. Only the exact Chroma config destination receives the exception;
+  normal adapter output restrictions remain in force for that name.
+- Review previews could emit terminal controls preserved in source comments.
+  Display escaping now preserves the original artifact bytes without executing
+  source terminal sequences.
+- Dry-run could pass a plan whose serialized transaction exceeded the backup
+  limit. Dry-run and commit now validate the same exact transaction payload
+  before staging or replacement.
+
+Setup history was separately checked before the first apply, after multiple
+setup changes, after an actual palette apply, during reverse mixed history, and
+with interrupted setup. Setup does not report a palette as applied and does not
+change the previously applied palette's ID/colors. The version-1 state/backup
+schema and existing CLI/configuration behavior remain compatible.
+
+Local release gates executed successfully:
+
+- cargo fmt --all -- --check
+- cargo clippy --locked --all-targets --all-features -- -D warnings
+- cargo test --locked --all-targets --all-features: **108 passed, 0 failed, 0 ignored**
+  (14 unit tests, 94 integration tests)
+- cargo build --locked --release
+- git diff --check
+- sh -n scripts/chroma-fuzzel
+
+Ten new regression tests include deterministic intervening edits before commit
+and after an actual replacement, stale config/state, source/template changes,
+new standalone adapters, directory replacement, target/source symlinks, recovery
+conflicts, full setup/apply history, native include refusal, terminal escaping,
+backup limits and the legacy adapter name. Existing mutation-free preview tests
+compare bytes, modes and modification times across the entire temporary tree.
+
+Native checks passed for all six presets using Niri 26.04, GTK3 3.24.52 via the
+checked-in CSS harness, Fuzzel 1.15.0, Kitty 0.50.0 via its native parse_config,
+and the checked-in C++ Island harness compiled against the standalone project's
+actual config.hpp. Foot's executable was unavailable; its colors-dark section,
+20 generated keys and RRGGBB values passed structural checks only. Island was not
+treated as Quickshell. No visual/session/reload validation is claimed.
+
+Dependency versions were unchanged by the audit fixes. No advisory database scan,
+MSRV toolchain run or physical power-loss campaign is claimed. Manual imports,
+restricted conventional configuration detection, unbounded backup retention and
+the final external-writer race window remain documented limitations. GitHub gates
+are verified separately for the final pushed SHA before merge.
+
+---
+
 # Validation record — guided v0.2 theme integration, 2026-11-16
 
 Branch: `feat/v0.2-theme-integration`, building on the existing review-bundle

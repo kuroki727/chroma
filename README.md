@@ -149,6 +149,13 @@ paths use the same preflight as real application. An error prevents every output
 replacement. Repeated palette application produces identical bytes while retaining
 rollback history.
 
+Planning now retains snapshots of configuration, standalone adapter membership,
+local templates, selected palette files and inspected sources. Apply rechecks them
+before replacements and refuses changed output directories or transaction state.
+Both preview and apply validate the exact serialized backup size. These checks
+narrow external-writer races; they cannot provide an atomic compare-and-rename
+against a process that ignores Chroma's lock.
+
 Setup and palette changes share one ordered history. `rollback --no-reload`
 undoes the last change, which may be an enable/disable operation. Before a first
 palette apply, `current` still reports no applied palette. Interrupted operations

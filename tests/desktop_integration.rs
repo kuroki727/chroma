@@ -429,3 +429,45 @@ fn desktop_adapter_cannot_overwrite_its_source_or_write_outside_generated() {
         .is_err()
     );
 }
+
+#[test]
+fn bundle_rechecks_chroma_config_and_refuses_pending_palette_recovery() {
+    let root = tempdir().unwrap();
+    let (paths, desktop) = fixture(root.path());
+    let palette = presets::get("nord").unwrap();
+    let planned = integration::plan(&paths, &desktop, &palette).unwrap();
+    fs::create_dir_all(&paths.config).unwrap();
+    fs::write(
+        paths.config.join("config.toml"),
+        "[adapters.desktop-waybar]\nenabled=false\n",
+    )
+    .unwrap();
+    assert!(
+        integration::apply(&paths, planned, true)
+            .unwrap_err()
+            .to_string()
+            .contains("configuration changed")
+    );
+    assert!(!paths.state.join("integration.toml").exists());
+    fs::remove_file(paths.config.join("config.toml")).unwrap();
+    let planned = integration::plan(&paths, &desktop, &palette).unwrap();
+    let mut state = chroma::engine::State::load(&paths.state).unwrap();
+    state.pending = Some(chroma::engine::Pending {
+        transaction: "tx-1-1".into(),
+        restoring: false,
+    });
+    state.save(&paths.state).unwrap();
+    assert!(
+        integration::apply(&paths, planned, true)
+            .unwrap_err()
+            .to_string()
+            .contains("pending palette")
+    );
+    assert!(
+        integration::plan(&paths, &desktop, &palette)
+            .unwrap_err()
+            .to_string()
+            .contains("pending palette")
+    );
+    assert!(!paths.state.join("integration.toml").exists());
+}

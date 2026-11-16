@@ -225,3 +225,20 @@ PNG and codec-native JPEG scaling remain future work.
 - Integration plans expose full proposed styling/configuration text on stdout;
   review it locally before sharing. No private configuration archives are stored
   in the repository; fixtures contain only the scoped CSS styles.
+
+
+## Final audit safety restrictions
+
+Review installation refuses existing Fuzzel include chains. Niri offline
+validation refuses include tokens (including quoted names and non-space
+separators), and conservatively leaves raw, escaped or multiline KDL strings for
+manual composed validation. This avoids allowing a temporary validation process
+to follow unchecked source paths. Normal generated Niri color includes remain
+supported, and the guided Fuzzel fragment workflow supports its one explicit
+managed include without copying or following it.
+
+Source/configuration snapshots are rechecked after native validation, and pending
+palette recovery blocks bundle installation/removal. Review previews escape
+terminal control characters without changing the proposed artifact bytes.
+A failure during bundle installation retains its recovery journal and explicitly
+directs the user to `integrate --rollback`.

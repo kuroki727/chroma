@@ -121,3 +121,14 @@ restricted. Setup records palette metadata to retain the existing state schema;
 Dry-run uses the same planning checks without staging, locking or creating state.
 The existing optional review-bundle journal remains compatible and separate from
 normal setup/application history.
+
+
+## Final audit input consistency
+
+`safe_fs::Inputs` holds read provenance only; it is excluded from Config's TOML
+schema. It records file snapshots (including absence and modes) and descriptor-read
+adapter membership, and validates them during apply/setup. Rendering carries the
+actual source/template reads into the shared plan. State and output directory
+checks reject detected intervening edits before committing. `preview_transaction`
+constructs and validates the exact backup payload for both dry-run and commit;
+version-1 transaction/state serialization remains unchanged.

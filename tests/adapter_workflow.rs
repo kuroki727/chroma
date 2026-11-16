@@ -519,3 +519,71 @@ fn apply_dry_run_checks_source_and_target_symlinks_using_real_plan() {
     }
     assert_eq!(fs::read_to_string(outside).unwrap(), "outside");
 }
+
+#[test]
+fn complete_setup_and_palette_history_reports_only_actual_applies() {
+    let d = Desktop::new();
+    d.ready();
+    assert!(d.ok(&["current"]).contains("No palette has been applied"));
+    d.enable("waybar", &[]);
+    d.enable("fuzzel", &["--opaque"]);
+    d.ok(&["adapters", "disable", "fuzzel"]);
+    for _ in 0..3 {
+        assert!(d.ok(&["current"]).contains("No palette has been applied"));
+        d.ok(&["rollback", "--no-reload"]);
+    }
+    assert!(d.ok(&["current"]).contains("No palette has been applied"));
+    d.enable("waybar", &[]);
+    d.ok(&["apply", "nord", "--no-reload"]);
+    let active = State::load(&d.paths().state).unwrap().current.unwrap();
+    d.enable("fuzzel", &["--opaque"]);
+    d.ok(&["adapters", "disable", "waybar"]);
+    for _ in 0..2 {
+        let now = State::load(&d.paths().state).unwrap().current.unwrap();
+        assert_eq!(now.id, active.id);
+        assert_eq!(now.palette, active.palette);
+        assert!(d.ok(&["current"]).contains("Nord (nord)"));
+        d.ok(&["rollback", "--no-reload"]);
+    }
+    d.ok(&["rollback", "--no-reload"]);
+    assert!(d.ok(&["current"]).contains("No palette has been applied"));
+    d.ok(&["rollback", "--no-reload"]);
+    assert!(State::load(&d.paths().state).unwrap().current.is_none());
+}
+
+#[test]
+fn symlinked_adapter_directory_is_rejected_without_following_it() {
+    let d = Desktop::new();
+    d.ok(&["init"]);
+    let directory = d.config().join("adapters");
+    fs::remove_dir(&directory).unwrap();
+    let outside = d.root.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("secret.toml"), "private malformed contents").unwrap();
+    symlink(&outside, &directory).unwrap();
+    let result = d.run(&["adapters", "list"]);
+    assert!(!result.status.success());
+    assert!(!String::from_utf8_lossy(&result.stderr).contains("private malformed"));
+}
+
+#[test]
+fn dry_run_checks_serialized_backup_limits_before_any_output_or_state_write() {
+    let d = Desktop::new();
+    d.ok(&["init"]);
+    fs::write(d.config().join("templates/large"), vec![b'x'; 800_000]).unwrap();
+    fs::write(
+        d.config().join("config.toml"),
+        "[adapters.large]\nenabled=true\ntemplate='templates/large'\noutput='generated/large'\n",
+    )
+    .unwrap();
+    let before = snapshot(d.root.path());
+    let preview = d.run(&["apply", "nord", "--dry-run"]);
+    assert!(!preview.status.success());
+    assert!(String::from_utf8_lossy(&preview.stderr).contains("state/backup exceeds 4 MiB"));
+    assert_eq!(snapshot(d.root.path()), before);
+    let applied = d.run(&["apply", "nord", "--no-reload"]);
+    assert!(!applied.status.success());
+    assert!(String::from_utf8_lossy(&applied.stderr).contains("state/backup exceeds 4 MiB"));
+    assert!(!d.config().join("generated/large").exists());
+    assert!(!d.paths().state.join("transactions").exists());
+}

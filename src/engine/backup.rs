@@ -6,13 +6,18 @@ use std::{
 };
 
 pub fn save<T: Serialize>(path: &Path, value: &T, replace: bool) -> Result<()> {
+    let bytes = encode(value)?;
+    safe_fs::write(path, &bytes, replace).with_context(|| format!("saving {}", path.display()))?;
+    Ok(())
+}
+
+pub(crate) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     let bytes = toml::to_string(value)?.into_bytes();
     ensure!(
         bytes.len() <= 4 * 1024 * 1024,
         "state/backup exceeds 4 MiB; reduce managed file sizes or archive old state"
     );
-    safe_fs::write(path, &bytes, replace).with_context(|| format!("saving {}", path.display()))?;
-    Ok(())
+    Ok(bytes)
 }
 
 pub fn create(state: &Path, transaction: &Transaction) -> Result<String> {

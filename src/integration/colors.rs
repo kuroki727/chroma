@@ -317,6 +317,14 @@ fn line_role(kind: Kind, section: &str, key: &str) -> Option<String> {
 }
 
 fn line_edits(kind: Kind, source: &str) -> Result<Vec<Edit>> {
+    if kind == Kind::Fuzzel {
+        let ini = crate::adapters::discovery::ini(source)?;
+        ensure!(
+            !ini.keys().any(|(_, key)| key == "include"),
+            "Fuzzel include chains require manual composition; no files followed"
+        );
+    }
+
     let mut section = "";
     let mut offset = 0;
     let mut found = BTreeSet::new();
