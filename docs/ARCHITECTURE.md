@@ -84,3 +84,51 @@ an image bomb. A mocked Fuzzel exercises the selector without opening a window.
 Native parser checks and version coverage are recorded separately in VALIDATION.md.
 They do not establish visual correctness, live reload behavior or power-failure
 resilience. The declared minimum Rust toolchain has not been tested separately.
+
+
+## v0.2 source-aware desktop adapters
+
+`integration::colors` implements restricted, lossless color-token replacement
+and native Niri/Kitty/GTK color outputs. `integration` plans separate review
+artifacts and disabled standalone adapter files, with its own private journal.
+It never mutates a desktop source. `integration::validate` uses temporary copies
+and bounded noninteractive Niri/Fuzzel validators during optional installation.
+The palette engine accepts initial ownership only for exact completed bundle
+snapshots and rejects pending integration recovery. Desktop activation stays
+manual; palette and integration rollback are separate operations.
+See [desktop guide](DESKTOP_INTEGRATION.md) for the precise supported grammar,
+source formats, watcher behavior and limitations.
+
+
+## Adapter discovery and setup
+
+`adapters::discovery` reads conventional main configs beneath an explicit XDG
+root, classifies missing/setup-required/ready/unsupported cases, and never follows
+application includes or changes desktop files. Ready classification is limited
+to recognizable Waybar/Fuzzel native connections, not arbitrary syntax validation.
+Other built-ins require manual composition/version validation.
+
+`adapters::setup` edits the enabled flag, diagnostic config path and inferred
+Fuzzel alpha in Chroma TOML using toml_edit, preserving unrelated configuration
+and comments. It submits a validated plan to the existing `engine::apply::commit`
+writer with reloads disabled. It uses the existing state lock, version-1 manifest,
+backup format, pending-operation recovery and reverse rollback history. No new
+setup journal exists. A reserved `chroma-setup` entry identifies narrowly scoped
+Chroma config destinations during recovery; ordinary adapter outputs remain
+restricted. Setup records palette metadata to retain the existing state schema;
+`current` reports no applied palette until an actual adapter output is committed.
+
+Dry-run uses the same planning checks without staging, locking or creating state.
+The existing optional review-bundle journal remains compatible and separate from
+normal setup/application history.
+
+
+## Final audit input consistency
+
+`safe_fs::Inputs` holds read provenance only; it is excluded from Config's TOML
+schema. It records file snapshots (including absence and modes) and descriptor-read
+adapter membership, and validates them during apply/setup. Rendering carries the
+actual source/template reads into the shared plan. State and output directory
+checks reject detected intervening edits before committing. `preview_transaction`
+constructs and validates the exact backup payload for both dry-run and commit;
+version-1 transaction/state serialization remains unchanged.

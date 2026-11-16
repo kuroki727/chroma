@@ -25,6 +25,30 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Discover adapters and explicitly configure Chroma fragment generation.
+    Adapters {
+        #[command(subcommand)]
+        command: AdapterCommands,
+    },
+    /// Preview or install a disabled desktop review bundle; never edits desktop configs.
+    Integrate {
+        #[arg(long, group = "integration_action")]
+        plan: bool,
+        #[arg(long, group = "integration_action")]
+        status: bool,
+        #[arg(long, group = "integration_action")]
+        apply: bool,
+        #[arg(long, group = "integration_action")]
+        rollback: bool,
+        /// Explicit approval to install the reviewed bundle. Desktop activation remains manual.
+        #[arg(long, requires = "apply")]
+        confirm: bool,
+        /// Read configs under this root; required with --config-dir for isolation.
+        #[arg(long)]
+        desktop_dir: Option<PathBuf>,
+        #[arg(long, default_value = "rustwood")]
+        palette: String,
+    },
     /// Create editable presets/templates and a disabled adapter configuration. Never overwrites.
     Init,
     /// List IDs (stable, one per line) or descriptive names.
@@ -68,8 +92,140 @@ pub enum Commands {
     Doctor,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum AdapterCommands {
+    /// List built-in fragment generators and configured custom adapters; no writes.
+    List,
+    /// Inspect main application configs without following includes or changing files.
+    Detect {
+        /// Required with --config-dir to avoid inspecting the active desktop.
+        #[arg(long)]
+        desktop_dir: Option<PathBuf>,
+    },
+    /// Enable fragment generation in Chroma's config only. Desktop wiring stays manual.
+    Enable {
+        name: String,
+        #[arg(long)]
+        desktop_dir: Option<PathBuf>,
+        /// Explicitly choose opaque Fuzzel colors when existing alpha is unknown.
+        #[arg(long)]
+        opaque: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Disable generation in Chroma's config; keeps generated files and native imports.
+    Disable {
+        name: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+fn desktop_root(paths: &Paths, isolated: bool, desktop: Option<PathBuf>) -> Result<PathBuf> {
+    crate::ensure!(
+        !isolated || desktop.is_some(),
+        "with --config-dir, supply --desktop-dir explicitly to avoid inspecting the active desktop"
+    );
+    Ok(desktop.unwrap_or_else(|| paths.xdg_config.clone()))
+}
+
 pub fn run(cli: Cli) -> Result<()> {
+    let isolated = cli.config_dir.is_some();
     let paths = Paths::discover(cli.config_dir, cli.state_dir)?;
+    if let Commands::Adapters { command } = cli.command {
+        return match command {
+            AdapterCommands::List => {
+                let config = Config::load(&paths)?;
+                for (name, file, _) in adapters::BUILTINS {
+                    let enabled = config.adapters.get(*name).is_some_and(|a| a.enabled);
+                    println!(
+                        "{name:<12} {}  fragment: generated/{file}; native connection requires explicit setup",
+                        if enabled { "enabled" } else { "disabled" }
+                    );
+                }
+                for (name, adapter) in &config.adapters {
+                    if !adapters::BUILTINS.iter().any(|(id, _, _)| *id == name) {
+                        println!(
+                            "{name:<12} {}  custom/review-bundle adapter; manual setup",
+                            if adapter.enabled {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            }
+                        );
+                    }
+                }
+                Ok(())
+            }
+            AdapterCommands::Detect { desktop_dir } => {
+                let desktop = desktop_root(&paths, isolated, desktop_dir)?;
+                for found in adapters::discovery::detect(&paths, &desktop)? {
+                    println!(
+                        "{:<12} {:<15} {}\n  {}",
+                        found.name,
+                        found.status.label(),
+                        found.path.display(),
+                        found.reason
+                    );
+                }
+                println!(
+                    "Read-only detection; application versions and full config semantics are not validated. No files changed."
+                );
+                Ok(())
+            }
+            AdapterCommands::Enable {
+                name,
+                desktop_dir,
+                opaque,
+                dry_run,
+            } => {
+                let desktop = desktop_root(&paths, isolated, desktop_dir)?;
+                adapters::setup::configure(&paths, &name, true, &desktop, opaque, dry_run)
+            }
+            AdapterCommands::Disable { name, dry_run } => {
+                adapters::setup::configure(&paths, &name, false, &paths.config, false, dry_run)
+            }
+        };
+    }
+    if let Commands::Integrate {
+        plan: _,
+        status,
+        apply,
+        rollback,
+        confirm,
+        desktop_dir,
+        palette,
+    } = cli.command
+    {
+        if rollback {
+            return crate::integration::rollback(&paths);
+        }
+        if status {
+            return crate::integration::status(&paths);
+        }
+        crate::ensure!(
+            !isolated || desktop_dir.is_some(),
+            "--config-dir integration needs an explicit --desktop-dir to avoid inspecting the active desktop"
+        );
+        let desktop = desktop_dir.unwrap_or_else(|| paths.xdg_config.clone());
+        let palette = palette::load(&paths.config, &palette)?;
+        if apply {
+            crate::ensure!(
+                confirm,
+                "review integrate --plan first, then supply --apply --confirm to install the disabled review bundle"
+            );
+        }
+        let plan = crate::integration::plan(&paths, &desktop, &palette)?;
+        if apply {
+            let count = crate::integration::apply(&paths, plan, confirm)?;
+            println!(
+                "Installed {count} review artifact(s). Adapters remain disabled; desktop configuration was not modified. See docs/DESKTOP_INTEGRATION.md for manual activation."
+            );
+        } else {
+            crate::integration::print(&plan);
+        }
+        return Ok(());
+    }
     if matches!(cli.command, Commands::Init) {
         return init(&paths);
     }
@@ -80,8 +236,9 @@ pub fn run(cli: Cli) -> Result<()> {
         println!("Restored previous managed files and palette state.");
         return Ok(());
     }
-    let config = Config::load(&paths)?;
+    let mut config = Config::load(&paths)?;
     match cli.command {
+        Commands::Integrate { .. } | Commands::Adapters { .. } => unreachable!(),
         Commands::Init => unreachable!(),
         Commands::List { names_only } => {
             for (id, palette) in palette::list(&paths.config)? {
@@ -98,7 +255,10 @@ pub fn run(cli: Cli) -> Result<()> {
                 state.pending.is_none(),
                 "interrupted operation; run chroma rollback before trusting current state"
             );
-            if let Some(active) = state.current {
+            if let Some(active) = state
+                .current
+                .filter(|a| a.files.keys().any(|p| paths.check_output(p).is_ok()))
+            {
                 println!("{} ({})", active.palette.name, active.id);
                 for (name, color) in active.palette.variables() {
                     println!("{name:<16} {color}");
@@ -113,16 +273,35 @@ pub fn run(cli: Cli) -> Result<()> {
             dry_run,
         } => {
             let id = palette.unwrap_or_else(|| config.general.default_palette.clone());
+            config
+                .inputs
+                .read(&paths.config.join("palettes").join(format!("{id}.toml")))?;
             let palette = palette::load(&paths.config, &id)?;
             if dry_run {
-                let plan = apply::plan(&paths, &config, &palette, &State::load(&paths.state)?)?;
-                for output in plan.outputs {
+                println!("Selected theme: {} ({id})", palette.name);
+                for (name, adapter) in &config.adapters {
+                    if !adapter.enabled {
+                        println!("Skipped {name}: disabled");
+                    }
+                }
+                let state = State::load(&paths.state)?;
+                let plan = apply::plan(&paths, &config, &palette, &state)?;
+                apply::preview_transaction(&plan, &state, &id, &palette)?;
+                for (output, entry) in plan.outputs.iter().zip(&plan.entries) {
+                    let action = match &entry.before {
+                        None => "create",
+                        Some(before) if before == &entry.after => "unchanged",
+                        _ => "modify",
+                    };
                     println!(
-                        "{} -> {} ({} bytes)",
+                        "Enabled {} -> {} ({action}, {} bytes)",
                         output.name,
                         output.path.display(),
                         output.bytes.len()
                     );
+                }
+                for report in &plan.reports {
+                    println!("  {report}");
                 }
                 println!("Dry run passed; no files or reload commands executed.");
             } else {
@@ -224,7 +403,7 @@ fn init(paths: &Paths) -> Result<()> {
         }
     }
     println!(
-        "Initialized {}. All new adapters are disabled; edit config.toml to opt in.",
+        "Initialized {}. All new adapters are disabled; run chroma adapters list, adapters detect, then adapters enable NAME --dry-run to review setup.",
         paths.config.display()
     );
     Ok(())
@@ -237,7 +416,9 @@ fn doctor(paths: &Paths, config: &Config) -> Result<()> {
         paths.state.display(),
         paths.cache.display()
     );
-    for program in ["niri", "waybar", "fuzzel", "kitty", "foot", "qs"] {
+    for program in [
+        "niri", "waybar", "fuzzel", "kitty", "foot", "island", "swaylock",
+    ] {
         println!(
             "{program:<12} {}",
             if adapters::reload::available(program) {
@@ -248,6 +429,11 @@ fn doctor(paths: &Paths, config: &Config) -> Result<()> {
         );
     }
     let palette = palette::load(&paths.config, &config.general.default_palette)?;
+    if !config.adapters.values().any(|adapter| adapter.enabled) {
+        println!(
+            "No enabled adapters: run chroma adapters list/detect and adapters enable NAME --dry-run. Palette application currently changes no files. Run chroma integrate --plan for application-aware setup; all generated adapter examples require explicit enabling."
+        );
+    }
     let mut issues = Vec::new();
     if safe_fs::read_optional(&paths.config.join("config.toml"))?.is_none() {
         issues.push("config.toml is missing; run init to create disabled examples".into());
@@ -307,7 +493,7 @@ fn doctor(paths: &Paths, config: &Config) -> Result<()> {
         "Imports/application versions are not auto-detected. Niri needs >=25.11; Fuzzel includes need >=1.10."
     );
     println!(
-        "Quickshell needs the FileView example; Foot takes effect in new processes. GTK/libadwaita and Qt have no universal palette API; no automatic integration."
+        "Island is a standalone application; use integrate --plan for its dedicated adapter. Foot takes effect in new processes. GTK/libadwaita and Qt have no universal palette API."
     );
     for issue in &issues {
         println!("Issue: {issue}");

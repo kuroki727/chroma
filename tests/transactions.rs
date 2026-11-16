@@ -536,3 +536,22 @@ fn inconsistent_recovery_endpoints_and_duplicate_entries_are_rejected() {
         );
     }
 }
+
+#[test]
+fn legacy_custom_adapter_named_chroma_setup_keeps_normal_output_rules() {
+    let mut f = Fixture::new();
+    let adapter = f.config.adapters.remove("test").unwrap();
+    f.config.adapters.insert("chroma-setup".into(), adapter);
+    let marker = f._root.path().join("reloaded");
+    f.config.general.auto_reload = true;
+    f.config.adapters.get_mut("chroma-setup").unwrap().reload =
+        vec!["/usr/bin/touch".into(), marker.to_str().unwrap().into()];
+    f.apply("nord").unwrap();
+    assert!(marker.exists());
+    fs::remove_file(&marker).unwrap();
+    rollback::rollback(&f.paths, &f.config, false).unwrap();
+    assert!(marker.exists());
+    assert!(!f.output().exists());
+    f.config.adapters.get_mut("chroma-setup").unwrap().output = Some("templates/test".into());
+    assert!(f.apply("nord").is_err());
+}

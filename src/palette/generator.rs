@@ -16,7 +16,10 @@ use std::{
 };
 
 const MAX_INPUT: u64 = 64 * 1024 * 1024;
-const MAX_PIXELS: u64 = 8_388_608; // Includes 3840×2160, rejects decode bombs before allocation.
+// 5K wallpapers (5120×2880) fit the unchanged 64 MiB decoded-byte budget.
+// Pixel count also bounds work for grayscale input. Never expand to a full-size
+// RGBA image: thumbnail in the native decoded format before conversion.
+const MAX_PIXELS: u64 = 16_777_216;
 const MAX_DECODED: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -63,7 +66,7 @@ pub fn generate(path: &Path, mode: Mode, name: &str) -> Result<Palette> {
     let (width, height) = decoder.dimensions();
     ensure!(
         width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_PIXELS,
-        "image pixel count exceeds 8,388,608 or is zero"
+        "image pixel count exceeds 16,777,216 or is zero (5K supported; decoded data must also fit 64 MiB)"
     );
     ensure!(
         decoder.total_bytes() <= MAX_DECODED,

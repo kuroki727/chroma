@@ -1,11 +1,15 @@
 //! Descriptor-relative Linux I/O. Every directory component is opened with
 //! O_NOFOLLOW; renames stay anchored to the directory checked during planning.
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     fs::{File, Permissions},
     io::{self, Read, Write},
-    os::unix::fs::{MetadataExt, PermissionsExt},
-    path::{Component, Path},
+    os::unix::{
+        ffi::OsStringExt,
+        fs::{MetadataExt, PermissionsExt},
+    },
+    path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -91,6 +95,29 @@ impl Dir {
             }
         }
         Ok(Self(fd.into()))
+    }
+
+    /// Reopen a path without symlinks and ensure it still names this directory.
+    pub fn check_path(&self, path: &Path) -> io::Result<()> {
+        let other = Self::open(path, false)?;
+        let held = self.0.metadata()?;
+        let current = other.0.metadata()?;
+        if held.dev() != current.dev() || held.ino() != current.ino() {
+            return Err(io::Error::other("directory changed during operation"));
+        }
+        self.check_writable()
+    }
+
+    pub fn toml_names(&self) -> io::Result<Vec<OsString>> {
+        let mut names = Vec::new();
+        for entry in fs::Dir::read_from(&self.0)? {
+            let name = OsString::from_vec(entry?.file_name().to_bytes().to_vec());
+            if Path::new(&name).extension().is_some_and(|e| e == "toml") {
+                names.push(name);
+            }
+        }
+        names.sort();
+        Ok(names)
     }
 
     pub fn parent(path: &Path) -> io::Result<(Self, OsString)> {
@@ -324,10 +351,98 @@ pub fn write(path: &Path, bytes: &[u8], replace: bool) -> io::Result<()> {
     }
     let mode = old.as_ref().map_or(0o600, |s| s.mode);
     let staged = dir.stage(bytes, mode)?;
-    if replace {
-        staged.commit(&name)
-    } else {
-        staged.commit_new(&name)
+    staged.commit_checked(&name, old.as_ref())
+}
+
+/// Snapshots of the actual files used to plan an operation. Absence and adapter
+/// directory membership are inputs too. Checks never stage or create anything.
+#[derive(Clone, Debug, Default)]
+pub struct Inputs {
+    files: BTreeMap<PathBuf, Option<Snapshot>>,
+    directories: BTreeMap<PathBuf, Vec<OsString>>,
+}
+
+pub fn snapshot_optional(path: &Path) -> io::Result<Option<Snapshot>> {
+    match Dir::parent(path) {
+        Ok((dir, name)) => dir.read(&name),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+impl Inputs {
+    pub fn read(&mut self, path: &Path) -> crate::Result<Option<Vec<u8>>> {
+        let snapshot = snapshot_optional(path)?;
+        if let Some(previous) = self.files.get(path) {
+            crate::ensure!(
+                previous == &snapshot,
+                "input changed during planning: {}",
+                path.display()
+            );
+        } else {
+            self.files.insert(path.to_owned(), snapshot.clone());
+        }
+        Ok(snapshot.map(|s| s.bytes))
+    }
+
+    pub fn adapters(&mut self, path: &Path) -> crate::Result<Vec<OsString>> {
+        let names = match Dir::open(path, false) {
+            Ok(dir) => dir.toml_names()?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e.into()),
+        };
+        if let Some(previous) = self.directories.get(path) {
+            crate::ensure!(
+                previous == &names,
+                "adapter directory changed: {}",
+                path.display()
+            );
+        } else {
+            self.directories.insert(path.to_owned(), names.clone());
+        }
+        Ok(names)
+    }
+
+    pub fn check(&self) -> crate::Result<()> {
+        for (path, expected) in &self.files {
+            crate::ensure!(
+                &snapshot_optional(path)? == expected,
+                "input changed during operation: {}; plan again",
+                path.display()
+            );
+        }
+        let mut copy = Self {
+            files: BTreeMap::new(),
+            directories: self.directories.clone(),
+        };
+        for path in self.directories.keys() {
+            copy.adapters(path)?;
+        }
+        Ok(())
+    }
+
+    pub fn extend(&mut self, other: &Self) -> crate::Result<()> {
+        for (path, expected) in &other.files {
+            if let Some(previous) = self.files.get(path) {
+                crate::ensure!(
+                    previous == expected,
+                    "input changed during planning: {}",
+                    path.display()
+                );
+            }
+            self.files.insert(path.clone(), expected.clone());
+        }
+        for (path, names) in &other.directories {
+            if let Some(previous) = self.directories.get(path) {
+                crate::ensure!(
+                    previous == names,
+                    "adapter directory changed: {}",
+                    path.display()
+                );
+            }
+            self.directories.insert(path.clone(), names.clone());
+        }
+        Ok(())
     }
 }
 

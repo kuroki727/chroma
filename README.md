@@ -3,7 +3,8 @@
 A local color engine for Linux desktops, written in Rust. Apply one semantic
 palette to separate application theme files, or derive a palette from a PNG/JPEG
 wallpaper. No daemon, network service, wallpaper setter, or desktop session is
-required. MIT licensed; version 0.1 is a tested MVP, not a production-readiness claim.
+required. MIT licensed. Version 0.2 adds read-only adapter discovery, guided fragment enablement, and application-aware review bundles with manual activation.
+See [desktop integration and limitations](docs/DESKTOP_INTEGRATION.md).
 
 Chroma **never edits your application's main configuration**. You choose adapters,
 review generated files, and add imports yourself. Every shipped adapter starts
@@ -25,6 +26,143 @@ cargo install --locked --path . --root "$HOME/.local"
 Ensure `$HOME/.local/bin` is on PATH. Chroma is not currently published to crates.io
 or packaged in an official Arch repository. Cargo needs network access for the
 first dependency download; the compiled program has no network operations.
+
+## Discover and enable adapters
+
+```sh
+chroma init
+chroma adapters list
+chroma adapters detect
+chroma adapters enable waybar --dry-run
+chroma adapters enable waybar
+chroma adapters enable fuzzel --dry-run   # Infers alpha from existing color keys
+chroma adapters enable fuzzel
+chroma apply nord --dry-run
+chroma apply nord --no-reload
+```
+
+`detect` is read-only and never follows imports, runs applications, or enables
+anything. It inspects conventional files under `$XDG_CONFIG_HOME`, with these results:
+
+| Result | Meaning |
+| --- | --- |
+| `ready` | A recognizable Waybar/Fuzzel native connection is present, with no detected competing definitions; full application semantics/version remain unverified |
+| `setup-required` | Application files exist, but imports, named references, local colors, alternate stylesheets, or manual format validation need attention |
+| `missing` | No conventional application configuration exists |
+| `unsupported` | Invalid/ambiguous inspected syntax or an unsafe path; review the diagnostic manually |
+
+`adapters list` also shows configured custom/review-bundle adapters. Guided
+`enable` and `disable` handle the six built-in generators. They change only
+Chroma's TOML, preserve unrelated keys/comments and permissions, and share the
+existing transaction backups and `rollback --no-reload` recovery. They do not
+apply a palette, create desktop imports, replace application colors, or run reloads.
+Preview either command with `--dry-run`. Repeated enablement is a no-op.
+Standalone `adapters/NAME.toml` files are supported; duplicate definitions remain
+an error. Custom templates/outputs and review-bundle adapters use manual configuration.
+
+Fuzzel requires all ten alpha bytes. Guided enablement retains configured bytes,
+or infers missing bytes from literal existing RRGGBB/RRGGBBAA colors. If any are
+unknown, it stops with instructions. For a new configuration, explicitly choose
+`chroma adapters enable fuzzel --opaque --dry-run`, then repeat without `--dry-run`
+to choose opacity 255. This choice does not change existing desktop files.
+
+With `--config-dir`, detection and enablement require an explicit
+`--desktop-dir /absolute/path/to/isolated-xdg-config`. This avoids inspecting the
+active desktop during demos. Normal XDG use requires no extra options.
+
+## Complete Waybar and Fuzzel example
+
+First initialize and generate **unconnected fragments**:
+
+```sh
+chroma init
+chroma adapters detect
+chroma adapters enable waybar --dry-run
+chroma adapters enable waybar
+# Choose opaque colors explicitly for this example. Omit --opaque to infer
+# existing Fuzzel alpha values instead; unknown values require a local choice.
+chroma adapters enable fuzzel --opaque --dry-run
+chroma adapters enable fuzzel --opaque
+chroma apply nord --dry-run
+chroma apply nord --no-reload
+```
+
+Back up your application files before manually editing them. The commands above
+never make these edits. At the beginning of Waybar's active stylesheet, add one
+import using the **absolute generated path shown by the preview**, for example:
+
+```css
+@import "/home/YOU/.config/chroma/generated/waybar.css";
+```
+
+In your existing rules, choose the color declarations you want Chroma to manage:
+
+```css
+window#waybar {
+    background: @chroma_background;
+    color: @chroma_foreground;
+}
+#workspaces button.active { color: @chroma_primary; }
+```
+
+Keep your existing fonts, padding, geometry and other declarations. Never paste a
+second `window#waybar` rule blindly; change only selected color values in your
+own rules. Literal colors elsewhere remain yours. Light/dark alternate
+stylesheets, other imports, and generated SCSS require manual composition review.
+The normal workflow does not rewrite CSS or Waybar JSON/JSONC. The optional
+`integrate --plan` command can propose a restricted CSS migration for review.
+Waybar uses [GTK CSS imports](https://github.com/Alexays/Waybar/blob/master/man/waybar-styles.5.scd.in).
+
+In Fuzzel >=1.10, put one `include` in `[main]`, retaining your other settings:
+
+```ini
+[main]
+include=/home/YOU/.config/chroma/generated/fuzzel.ini
+font=Your existing font:size=12
+terminal=your-existing-terminal
+width=40
+```
+
+Use your own absolute path, font, terminal and width. After backing up and
+reviewing the generated colors, manually remove/move competing local `[colors]`
+settings and review any other includes. Fuzzel's native include is documented in
+its [upstream manual](https://codeberg.org/dnkl/fuzzel/src/branch/master/doc/fuzzel.ini.5.scd).
+Run `chroma adapters detect` again to inspect the connection, then:
+
+```sh
+chroma apply paper --dry-run
+chroma apply paper --no-reload
+chroma rollback --no-reload       # Restore Nord fragments
+chroma adapters disable fuzzel --dry-run
+chroma adapters disable fuzzel   # Stop future generation; leaves imports/files
+```
+
+Fuzzel reads colors on its next ordinary launch. Reload Waybar yourself if
+needed, or separately configure a trusted reload argv. `--no-reload` prevents
+commands, but a running application's own file watcher may react to connected
+fragment writes. Discovery never probes application versions or invokes parsers.
+
+Apply previews report the selected theme, enabled adapters, disabled/skipped
+adapters, destinations, create/modify/unchanged actions and known integration
+conflicts. Output ownership, permissions, malformed inspected sources and unsafe
+paths use the same preflight as real application. An error prevents every output
+replacement. Repeated palette application produces identical bytes while retaining
+rollback history.
+
+Planning now retains snapshots of configuration, standalone adapter membership,
+local templates, selected palette files and inspected sources. Apply rechecks them
+before replacements and refuses changed output directories or transaction state.
+Both preview and apply validate the exact serialized backup size. These checks
+narrow external-writer races; they cannot provide an atomic compare-and-rename
+against a process that ignores Chroma's lock.
+
+Setup and palette changes share one ordered history. `rollback --no-reload`
+undoes the last change, which may be an enable/disable operation. Before a first
+palette apply, `current` still reports no applied palette. Interrupted operations
+must be recovered before further setup or application. Backups retain both bytes
+and ordinary Unix modes; later external edits are preserved and reported as
+incomplete rollback. To undo manual application wiring, restore your own desktop
+configuration backups separately.
 
 ## Try it safely, without connecting a desktop
 
@@ -59,6 +197,11 @@ The temporary demo has no imports and cannot affect your running desktop.
 
 ```sh
 chroma init                          # Seed editable files; never overwrite
+chroma adapters list                 # Built-in/custom generators and enabled state
+chroma adapters detect               # Read-only conventional desktop inspection
+chroma adapters enable waybar --dry-run
+chroma adapters enable waybar        # Chroma config only; reversible
+chroma adapters disable waybar --dry-run
 chroma list                          # IDs and display names
 chroma list --names-only             # Stable IDs, one per line
 chroma current                       # Last committed palette, including ANSI
@@ -77,6 +220,10 @@ chroma rollback --no-reload          # Recovery even with a broken config
 chroma validate                     # All available palettes and configured templates
 chroma validate rustwood
 chroma doctor
+chroma integrate --plan              # Read-only desktop detection and exact proposals
+chroma integrate --status            # Review bundle status, no writes
+chroma integrate --apply --confirm   # Optional: install disabled review artifacts only
+chroma integrate --rollback          # Remove unchanged bundle artifacts only
 ```
 
 `generate` saves a palette; it never applies a theme or changes wallpaper.
@@ -156,7 +303,7 @@ Adapter path strings accept `{config_dir}`, `{state_dir}`, `{home}`,
 `{xdg_config_home}`, and a leading `~/`. Other relative paths resolve under
 Chroma's config directory. No shell expansions, commands, environment substitution
 or parent traversal are supported. Destinations' parent directories must exist.
-Outputs inside Chroma config are restricted to `generated/`; state is protected.
+Adapter outputs inside Chroma config are restricted to `generated/`; state is protected. The setup writer may modify only Chroma’s config.toml or a standalone adapter TOML, using the same version-1 transaction engine.
 
 ## Palettes and ANSI derivation
 
@@ -237,7 +384,7 @@ same toolchain; floating-point behavior across future algorithm versions is not
 a stable palette format guarantee.
 
 Limits: actual compressed input <=64 MiB, dimensions <=16384 per side, at most
-8,388,608 pixels (including 3840×2160), and <=64 MiB decoded output. These checks
+16,777,216 pixels (including 5120×2880 RGB wallpapers), and <=64 MiB decoded output. These checks
 precede pixel decoding. FIFO/device inputs are rejected without blocking. The
 image is decoded before thumbnailing, so large images still cost decode time and
 memory. Codec-internal allocations and compressed buffers add overhead; this is
@@ -310,7 +457,8 @@ paths below assume `~/.config/chroma`; use your real absolute path when XDG diff
 | Kitty | `generated/kitty.conf` | Native include; new process or manual config reload |
 | Foot >=1.26 | `generated/foot.ini` | Native include, `colors-dark` default slot; new process |
 | Quickshell | `generated/colors.json` | Add the FileView consumer; no shell reload command required |
-| Dynamic Island | User-specified | Generic adapter works; real syntax/consumer/reload must be supplied |
+| Standalone Island | `generated/desktop-island.css` via integration bundle | Native `-s` stylesheet; dedicated color mapping; manual activation |
+| Swaylock-effects | Separate generated config | Color states mapped; invalid shell syntax requires manual correction |
 | GTK / Qt | No automatic adapter | See limitations below |
 
 ### Niri
@@ -322,7 +470,7 @@ conflicting layout colors:
 include "/absolute/path/to/chroma/generated/niri.kdl"
 ```
 
-The template only sets focus-ring/border colors; it does not turn borders on or
+The template only sets border active/inactive/urgent colors and background; it does not turn borders on or
 change width. Niri merges included layout properties and watches included files
 from version 25.11. Older versions have no supported automatic integration here.
 Validate the composed config using `niri validate -c /path/to/config.kdl` before
@@ -362,6 +510,9 @@ enabled = true
 [adapters.fuzzel.alpha]
 background = 221       # DD; use YOUR existing alpha, not this illustrative value
 text = 255            # FF
+prompt = 255
+placeholder = 255
+input = 255
 match = 255
 selection = 255
 selection_text = 255
@@ -369,7 +520,7 @@ selection_match = 255
 border = 255
 ```
 
-All seven values are required by the default template. You can use a reduced
+All ten values are required by the default template. You can use a reduced
 custom template to manage fewer properties. The palette never controls alpha.
 Then add in the main/default section of `fuzzel.ini` (before `[colors]`):
 
@@ -409,7 +560,7 @@ the [upstream manual](https://codeberg.org/dnkl/foot/src/branch/master/doc/foot.
 the same man-page source was inspected via its
 [source mirror](https://github.com/clearcmos/foot/blob/main/doc/foot.ini.5.scd).
 
-### Quickshell and custom Dynamic Island
+### Quickshell (independent optional adapter)
 
 Quickshell has no universal theme file. The adapter generates JSON and
 [examples/quickshell/ChromaColors.qml](examples/quickshell/ChromaColors.qml) uses
@@ -422,16 +573,15 @@ singletons, and it does not invoke `qs reload`. The
 [FileView documentation](https://quickshell.org/docs/v0.2.1/types/Quickshell.Io/FileView/)
 defines this watcher pattern.
 
-Dynamic Island's configuration syntax is intentionally **not assumed**.
-[The example adapter](examples/dynamic-island-adapter.toml) and illustrative plain
-text template show the contract: diagnostic `config_path`, user-defined
-`template`, separate `output`, and optional argv `reload`. Replace the example
-template with the real format and arrange for your app to consume the generated
-theme. Chroma does not inspect or overwrite your existing Island config. If an
-app has no include/theme support, create a separate complete config from an
-explicitly maintained local template and point the app to it yourself. Chroma
-cannot merge arbitrary configuration languages or preserve unknown properties
-inside a file it has been asked to replace.
+### Standalone Dynamic Island
+
+The user's Island is an independent C++ application, unrelated to Quickshell.
+`chroma integrate --plan` uses its verified CSS format, maps existing color
+literals, preserves non-color declarations and alpha, and proposes a separate
+stylesheet for its native `-s` option. It never changes behavior JSONC. There is no
+CSS import support in the inspected parser. See the [dedicated integration guide](docs/DESKTOP_INTEGRATION.md)
+for validation, trusted optional reload configuration and manual setup. The older
+generic text example remains available for other custom applications.
 
 ### GTK and Qt limitations
 
@@ -538,13 +688,13 @@ Errors carry operation, adapter and path context using `anyhow`. The library
 forbids unsafe Rust; Linux filesystem primitives are supplied by `rustix`.
 
 The build uses clap, serde/TOML, image (PNG/JPEG only), anyhow and rustix.
-`tempfile` is test-only. There is no embedded interpreter or GUI toolkit.
+`tempfile` also isolates noninteractive Niri/Fuzzel validators during optional bundle installation. There is no embedded interpreter or GUI toolkit.
 
 ```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-cargo build --release
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+cargo build --locked --release
 ```
 
 `Cargo.lock` is included. Add `--locked --offline` after fetching dependencies for

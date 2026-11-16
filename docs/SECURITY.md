@@ -109,7 +109,7 @@ Wallpaper opening is nonblocking so FIFOs/devices are rejected without waiting
 for a writer. Only regular PNG/JPEG inputs are accepted. The compressed input is
 read through a 64 MiB bound before decoding, rather than trusting its initial file
 length. Headers must advertise nonzero dimensions, at most 16384 per side,
-**8,388,608 pixels**, and at most **64 MiB decoded output**. This supports 3840×2160;
+**16,777,216 pixels**, and at most **64 MiB decoded output**. This supports 5120×2880 RGB wallpapers;
 larger wallpapers need offline resizing. Sampling is bounded to 128×128 and
 clustering to 12 centers/24 iterations.
 
@@ -145,3 +145,59 @@ An interrupted apply/rollback retains a pending record and blocks new applies.
 Temporary `.chroma-*.tmp` files or unreferenced completed backups can remain after
 a crash; no background process cleans them up. Never remove a referenced backup
 while recovery is pending.
+
+
+## v0.2 integration bundles
+
+See [desktop integration](DESKTOP_INTEGRATION.md) for the separate private journal,
+fixed artifact allowlist, exact first-apply ownership, disabled defaults and
+conflict-preserving rollback. Integration never modifies desktop source files.
+Native Niri/Fuzzel validators operate only on temporary copies with a three-second
+direct-child timeout. Island/GTK offline harnesses never launch desktop processes.
+Manual imports can connect generated files to application watchers; disconnect
+those imports before removing bundles. No Quickshell dependency was added.
+
+
+## v0.2 adapter setup
+
+`adapters detect` reads conventional application files without following imports,
+invoking applications or creating state. It rejects unsafe roots and reports
+unsupported syntax per application. Its limited CSS/INI inspection does not
+establish complete semantic validity or installed-version support.
+
+`adapters enable/disable` changes only Chroma TOML. Guided enablement requires
+standard generated fragment destinations; custom formats/outputs remain manual.
+Setup shares the palette transaction writer, lock, pending record, backup schema
+and rollback history. The `chroma-setup` recovery entry permits exactly Chroma's
+config.toml or standalone adapter TOMLs beneath its adapters/ directory. Ordinary
+adapter outputs cannot use that exception to replace Chroma input files. Setup
+never reloads applications. Its dry-run never stages, locks or writes state.
+
+Enabling is separate from manual desktop wiring. Generated colors cannot override
+unrelated application settings by themselves; connecting native imports and
+choosing which existing colors to replace requires user review and separate
+application backups. Configuration edits outside Chroma after setup may block a
+later rollback; the expected snapshots remain in private transaction records.
+
+
+## Final v0.2 audit hardening
+
+Configuration loading records main/standalone TOML snapshots and descriptor-read
+adapter directory membership. Planning records the templates, inspected sources,
+selected local palette and integration journal actually used. Inputs are
+rechecked before replacement, including intervening mode changes and file
+creation/removal. Output directories are reopened with no-follow and compared
+with held device/inode identities; swapped paths fail instead of committing to
+an obsolete directory. The final kernel compare/rename window with an
+uncooperative same-user writer remains a documented limitation.
+
+Manifest replacement compares the expected transaction state before staging and
+rechecks its snapshot before rename. External state changes are preserved, even
+when that prevents automatic recovery from clearing a pending record. Durable
+backups remain available for manual resolution. Rollback retains the descriptor
+used for target inspection. No new transaction system or on-disk schema was added.
+
+Dry-run and commit validate the same serialized backup payload and snapshot size
+limits. Review output escapes terminal control sequences in source text. Native
+review validation refuses unchecked include chains; conservative KDL cases need
+manual composed validation rather than following source-specified paths.

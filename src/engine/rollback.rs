@@ -13,7 +13,7 @@ pub fn restore(paths: &Paths, transaction: &Transaction) -> Result<()> {
     // Reject a malformed later entry before touching an earlier valid one.
     transaction.validate()?;
     for entry in &transaction.entries {
-        paths.check_output(&entry.path)?;
+        crate::engine::check_entry(paths, entry)?;
     }
     let mut errors = Vec::new();
     for entry in transaction.entries.iter().rev() {
@@ -50,6 +50,17 @@ pub fn restore(paths: &Paths, transaction: &Transaction) -> Result<()> {
 }
 
 fn reload_restored(paths: &Paths, config: &Config, transaction: &Transaction) -> Result<()> {
+    if transaction
+        .entries
+        .iter()
+        .all(|e| e.adapter == "chroma-setup" && paths.check_output(&e.path).is_err())
+    {
+        return Ok(());
+    }
+    config
+        .inputs
+        .check()
+        .context("files restored, but reload configuration changed")?;
     let mut errors = Vec::new();
     for entry in &transaction.entries {
         if let Some(adapter) = config.adapters.get(&entry.adapter).filter(|a| a.enabled) {
@@ -80,10 +91,22 @@ pub fn recover_failed<T>(
     reload_enabled: bool,
     error: anyhow::Error,
 ) -> Result<T> {
+    let expected = State::load(&paths.state)?;
+    recover_failed_checked(paths, config, transaction, reload_enabled, &expected, error)
+}
+
+pub(crate) fn recover_failed_checked<T>(
+    paths: &Paths,
+    config: &Config,
+    transaction: &Transaction,
+    reload_enabled: bool,
+    expected: &State,
+    error: anyhow::Error,
+) -> Result<T> {
     restore(paths, transaction).with_context(|| {
         format!("operation failed: {error:#}; automatic recovery failed; run chroma rollback")
     })?;
-    State {version: 1, current: transaction.before.clone(), head: transaction.parent.clone(), pending: None}.save(&paths.state)
+    State {version: 1, current: transaction.before.clone(), head: transaction.parent.clone(), pending: None}.save_if(&paths.state, expected)
         .with_context(|| format!("operation failed: {error:#}; files restored but state recovery failed; run chroma rollback"))?;
     let reload_result = if reload_enabled {
         reload_restored(paths, config, transaction)
@@ -119,19 +142,22 @@ pub fn rollback(paths: &Paths, config: &Config, no_reload: bool) -> Result<()> {
         "recovery state does not match backup; no files changed"
     );
     // Mark rollback before restoring anything; crashes can always be retried.
+    let previous = state.clone();
     state.pending = Some(Pending {
         transaction: id,
         restoring: true,
     });
-    state.save(&paths.state)?;
+    dir.check_path(&paths.state)?;
+    state.save_if(&paths.state, &previous)?;
     restore(paths, &transaction)?;
+    dir.check_path(&paths.state)?;
     State {
         version: 1,
         current: transaction.before.clone(),
         head: transaction.parent.clone(),
         pending: None,
     }
-    .save(&paths.state)?;
+    .save_if(&paths.state, &state)?;
     if config.general.auto_reload && !no_reload {
         reload_restored(paths, config, &transaction)?;
     }
