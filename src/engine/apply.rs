@@ -13,6 +13,7 @@ pub struct Plan {
     pub outputs: Vec<Output>,
     pub entries: Vec<Entry>,
     pub dirs: Vec<(Dir, OsString)>,
+    pub reports: Vec<String>,
 }
 
 pub fn plan(paths: &Paths, config: &Config, palette: &Palette, state: &State) -> Result<Plan> {
@@ -25,6 +26,7 @@ pub fn plan(paths: &Paths, config: &Config, palette: &Palette, state: &State) ->
     let mut outputs = Vec::new();
     let mut entries = Vec::new();
     let mut dirs = Vec::new();
+    let mut reports = Vec::new();
     let mut destinations = BTreeSet::new();
     let mut inputs = BTreeSet::new();
     for adapter in config.adapters.values() {
@@ -37,6 +39,25 @@ pub fn plan(paths: &Paths, config: &Config, palette: &Palette, state: &State) ->
     }
     for (name, adapter) in config.adapters.iter().filter(|(_, a)| a.enabled) {
         let output = adapters::render(name, adapter, paths, palette)?;
+        if let Some(main) = &adapter.config_path {
+            if adapters::discovery::APPLICATIONS
+                .iter()
+                .any(|(id, _)| id == name)
+            {
+                let main = paths.expand(main)?;
+                let (status, reason) = adapters::discovery::inspect(paths, name, &main)
+                    .with_context(|| {
+                        format!(
+                            "adapter {name}: incompatible integration point {}",
+                            main.display()
+                        )
+                    })?;
+                reports.push(format!("{name}: integration {}: {reason}", status.label()));
+            }
+        } else {
+            reports.push(format!("{name}: integration not inspected: no config_path; review imports and possible local color conflicts manually"));
+        }
+
         ensure!(
             !inputs.contains(&output.path),
             "adapter {name}: output cannot replace any adapter's template or main config: {}",
@@ -88,12 +109,13 @@ pub fn plan(paths: &Paths, config: &Config, palette: &Palette, state: &State) ->
     }
     ensure!(
         !outputs.is_empty(),
-        "no enabled adapters; nothing applied. Preview your desktop with chroma integrate --plan, or run chroma init and explicitly enable an adapter. Integration bundles also start disabled; see docs/DESKTOP_INTEGRATION.md"
+        "no enabled adapters; nothing applied. Run chroma adapters list, adapters detect, and adapters enable NAME --dry-run, or preview your desktop with chroma integrate --plan. Integration bundles also start disabled; see docs/DESKTOP_INTEGRATION.md"
     );
     Ok(Plan {
         outputs,
         entries,
         dirs,
+        reports,
     })
 }
 
@@ -120,8 +142,44 @@ fn apply_inner(
     let _lock = state_dir
         .lock()
         .context("another Chroma operation is running, or state is unsafe")?;
-    let mut state = State::load(&paths.state)?;
+    let state = State::load(&paths.state)?;
     let plan = plan(paths, config, &palette, &state)?;
+    commit(
+        paths,
+        config,
+        (id, palette),
+        no_reload,
+        &state,
+        &plan,
+        after_replace,
+    )
+}
+
+/// Commit a fully validated plan using the v0.1 durable journal and recovery.
+/// Setup uses this same writer and history, with no reload commands.
+pub(crate) fn commit(
+    paths: &Paths,
+    config: &Config,
+    selection: (&str, Palette),
+    no_reload: bool,
+    initial: &State,
+    plan: &Plan,
+    after_replace: impl Fn(usize) -> Result<()>,
+) -> Result<usize> {
+    ensure!(
+        initial.pending.is_none(),
+        "interrupted operation; run chroma rollback --no-reload"
+    );
+    ensure!(
+        !plan.entries.is_empty() && plan.entries.len() == plan.dirs.len(),
+        "invalid transaction plan"
+    );
+    for entry in &plan.entries {
+        crate::engine::check_entry(paths, entry)?;
+        entry.after.validate()?;
+    }
+    let (id, palette) = selection;
+    let mut state = initial.clone();
     // All outputs are fully written and fsynced in their destination directories
     // before a backup is committed or any target is replaced.
     let mut staged = Vec::new();

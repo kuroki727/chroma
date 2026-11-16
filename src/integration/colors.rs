@@ -66,7 +66,7 @@ fn trimmed_range(source: &str, range: Range<usize>) -> Range<usize> {
 }
 
 /// Mask comments and check quoted CSS strings without changing byte offsets.
-fn css_mask(source: &str) -> Result<String> {
+pub(crate) fn css_mask(source: &str) -> Result<String> {
     let mut out = source.as_bytes().to_vec();
     let mut i = 0;
     while i < out.len() {

@@ -156,3 +156,25 @@ Native Niri/Fuzzel validators operate only on temporary copies with a three-seco
 direct-child timeout. Island/GTK offline harnesses never launch desktop processes.
 Manual imports can connect generated files to application watchers; disconnect
 those imports before removing bundles. No Quickshell dependency was added.
+
+
+## v0.2 adapter setup
+
+`adapters detect` reads conventional application files without following imports,
+invoking applications or creating state. It rejects unsafe roots and reports
+unsupported syntax per application. Its limited CSS/INI inspection does not
+establish complete semantic validity or installed-version support.
+
+`adapters enable/disable` changes only Chroma TOML. Guided enablement requires
+standard generated fragment destinations; custom formats/outputs remain manual.
+Setup shares the palette transaction writer, lock, pending record, backup schema
+and rollback history. The `chroma-setup` recovery entry permits exactly Chroma's
+config.toml or standalone adapter TOMLs beneath its adapters/ directory. Ordinary
+adapter outputs cannot use that exception to replace Chroma input files. Setup
+never reloads applications. Its dry-run never stages, locks or writes state.
+
+Enabling is separate from manual desktop wiring. Generated colors cannot override
+unrelated application settings by themselves; connecting native imports and
+choosing which existing colors to replace requires user review and separate
+application backups. Configuration edits outside Chroma after setup may block a
+later rollback; the expected snapshots remain in private transaction records.

@@ -1,4 +1,6 @@
+pub mod discovery;
 pub mod reload;
+pub mod setup;
 pub mod template;
 
 use crate::{

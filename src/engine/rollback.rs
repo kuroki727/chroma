@@ -13,7 +13,7 @@ pub fn restore(paths: &Paths, transaction: &Transaction) -> Result<()> {
     // Reject a malformed later entry before touching an earlier valid one.
     transaction.validate()?;
     for entry in &transaction.entries {
-        paths.check_output(&entry.path)?;
+        crate::engine::check_entry(paths, entry)?;
     }
     let mut errors = Vec::new();
     for entry in transaction.entries.iter().rev() {

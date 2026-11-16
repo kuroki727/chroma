@@ -169,3 +169,25 @@ impl Transaction {
         Ok(())
     }
 }
+
+/// The setup writer may change exactly Chroma's own TOML configuration, never
+/// application configs. Ordinary adapter outputs retain the v0.1 restrictions.
+pub(crate) fn check_entry(paths: &crate::config::Paths, entry: &Entry) -> Result<()> {
+    if entry.adapter == "chroma-setup" {
+        validate_path(&entry.path)?;
+        let standalone = entry.path.parent() == Some(paths.config.join("adapters").as_path())
+            && entry.path.extension().is_some_and(|s| s == "toml");
+        ensure!(
+            entry.path == paths.config.join("config.toml") || standalone,
+            "invalid setup recovery destination: {}",
+            entry.path.display()
+        );
+        ensure!(
+            !entry.path.starts_with(&paths.state),
+            "setup cannot overwrite state"
+        );
+        Ok(())
+    } else {
+        paths.check_output(&entry.path)
+    }
+}

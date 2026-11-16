@@ -1,3 +1,51 @@
+# Validation record — guided v0.2 theme integration, 2026-11-16
+
+Branch: `feat/v0.2-theme-integration`, building on the existing review-bundle
+implementation at `8c4a47d`. No active desktop files were edited and no application
+reload, GUI, wallpaper or lock-screen command was run. All mutating tests and
+native parser checks used temporary XDG roots.
+
+| Executed check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | Passed |
+| `cargo clippy --all-targets --all-features -- -D warnings` | Passed, no warnings |
+| `cargo test --all-targets --all-features` | 98 passed, 0 failed, 0 ignored |
+| `cargo build --locked --release` | Passed |
+| `sh -n scripts/chroma-fuzzel` | Passed |
+| `git diff --check` | Passed |
+
+The suite contains 9 unit tests and 89 integration tests. Eighteen new tests
+exercise adapter discovery, four detection states, missing/fresh XDG roots,
+isolation, existing fonts/layout/literal colors, duplicate/conflicting imports,
+malformed INI/CSS, alpha inference and explicit opacity, guided setup/disable,
+comment/mode preservation, standalone adapters, idempotent enablement, byte-identical
+reapplication, all eleven semantic CSS roles, Fuzzel propagation, source/target/root
+symlinks, traversal, whole-tree dry-run snapshots (bytes/modes/mtimes), unmanaged
+output conflicts across adapters, setup failure injection, interrupted setup,
+external-edit preservation and mixed setup/palette rollback history. Original
+v0.1 transaction/CLI tests and the existing review-bundle tests remain passing.
+Setup uses the original writer, version-1 snapshots and ordered rollback history.
+
+Additional native smoke checks compiled `scripts/check-gtk-css.c` against the
+installed GTK3 libraries, then loaded a temporary Waybar stylesheet importing the
+actual generated fragment. Fuzzel `--check-config --config TEMP --log-no-syslog`
+parsed a temporary main INI with the actual generated native include. Both passed
+for rustwood, gruvbox-dark, nord, catppuccin-mocha, tokyo-night and paper.
+No display was initialized. These checks establish parser acceptance, not visual
+correctness or live reload behavior. The release build and selector shell syntax
+check also passed.
+
+Limitations: discovery intentionally inspects conventional paths and a restricted
+CSS/INI integration shape; it does not establish arbitrary application semantics,
+follow include chains, or probe installed versions. Other native/custom formats
+require manual composition validation. Desktop wiring remains manual and needs
+separate application backups. Repeated palette application retains history even
+when resulting file bytes match. Existing filesystem/durability and MSRV limits
+below still apply. No new dependency versions were resolved; toml_edit was
+promoted from an already locked transitive dependency to preserve TOML comments.
+
+---
+
 # Validation record — v0.2 desktop review bundles, 2026-11-16
 
 Branch: `feat/desktop-integration-v0.2`, based on `main` at `b0969a0`.

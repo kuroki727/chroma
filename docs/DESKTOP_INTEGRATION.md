@@ -1,3 +1,9 @@
+For the guided v0.2 workflow, start with `chroma adapters list`,
+`chroma adapters detect`, and `chroma adapters enable NAME --dry-run`.
+See the [complete Waybar/Fuzzel example](../README.md#complete-waybar-and-fuzzel-example).
+These commands change Chroma configuration only; the review-bundle workflow below
+remains available for restricted migration proposals and older installations.
+
 # Desktop integration in v0.2.0
 
 This release implements a **review bundle with manual desktop activation**. It
