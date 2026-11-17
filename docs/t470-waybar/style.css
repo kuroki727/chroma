@@ -1,0 +1,47 @@
+@import "/home/kuroki/.config/chroma/generated/waybar.css";
+* {
+    font-family: "JetBrainsMono Nerd Font", "Symbols Nerd Font", monospace;
+    font-size: 13px;
+    border: none;
+    border-radius: 0;
+    min-height: 0;
+}
+
+window#waybar {
+    background: @chroma_background;
+    color: @chroma_foreground;
+}
+
+#workspaces button {
+    padding: 0 5px;
+    margin: 0;
+    color: @chroma_muted;
+    background: transparent;
+}
+
+#workspaces button.active {
+    color: @chroma_foreground;
+    border-bottom: 2px solid @chroma_primary;
+}
+
+#pulseaudio,
+#backlight,
+#network,
+#battery {
+    padding: 0 5px;
+    margin: 0;
+    color: @chroma_foreground;
+    background: transparent;
+}
+
+#network.disconnected {
+    color: @chroma_muted;
+}
+
+#battery.warning {
+    color: @chroma_warning;
+}
+
+#battery.critical {
+    color: mix(@chroma_error, @chroma_foreground, 0.15);
+}
