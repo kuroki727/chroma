@@ -18,7 +18,17 @@ pub fn restore(paths: &Paths, transaction: &Transaction) -> Result<()> {
     let mut errors = Vec::new();
     for entry in transaction.entries.iter().rev() {
         let result = (|| -> Result<()> {
-            let (dir, file) = Dir::parent(&entry.path)?;
+            let (dir, file) = match Dir::parent(&entry.path) {
+                Ok(pair) => pair,
+                // A creation is already undone if its parent is gone too. Do
+                // not recreate directories, or accept symlink/permission errors.
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound && entry.before.is_none() =>
+                {
+                    return Ok(());
+                }
+                Err(error) => return Err(error.into()),
+            };
             dir.check_writable()?;
             dir.check_target(&file)?;
             let actual = dir.read(&file)?;

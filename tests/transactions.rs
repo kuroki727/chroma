@@ -104,6 +104,39 @@ fn newly_created_files_are_deleted_by_rollback() {
 }
 
 #[test]
+fn rollback_accepts_an_already_absent_new_output_parent() {
+    let f = Fixture::new();
+    f.apply("paper").unwrap();
+    fs::remove_file(f.output()).unwrap();
+    fs::remove_dir(f.output().parent().unwrap()).unwrap();
+    rollback::rollback(&f.paths, &f.config, true).unwrap();
+    let state = State::load(&f.paths.state).unwrap();
+    assert!(state.current.is_none() && state.pending.is_none());
+    assert!(!f.output().parent().unwrap().exists());
+}
+
+#[test]
+fn rollback_missing_parent_cannot_discard_a_required_original() {
+    let mut f = Fixture::new();
+    fs::write(f.output(), b"original").unwrap();
+    f.config.adapters.get_mut("test").unwrap().allow_overwrite = true;
+    f.apply("paper").unwrap();
+    let generated = fs::read(f.output()).unwrap();
+    let mode = fs::metadata(f.output()).unwrap().permissions();
+    fs::remove_file(f.output()).unwrap();
+    fs::remove_dir(f.output().parent().unwrap()).unwrap();
+    assert!(rollback::rollback(&f.paths, &f.config, true).is_err());
+    let state = State::load(&f.paths.state).unwrap();
+    let pending = state.pending.unwrap();
+    assert!(backup::load(&f.paths.state, &pending.transaction).is_ok());
+    Dir::open(f.output().parent().unwrap(), true).unwrap();
+    chroma::safe_fs::write(&f.output(), &generated, false).unwrap();
+    fs::set_permissions(f.output(), mode).unwrap();
+    rollback::rollback(&f.paths, &f.config, true).unwrap();
+    assert_eq!(fs::read(f.output()).unwrap(), b"original");
+}
+
+#[test]
 fn unmanaged_files_and_external_edits_require_local_authorization() {
     let f = Fixture::new();
     fs::write(f.output(), b"keep me").unwrap();
@@ -554,4 +587,171 @@ fn legacy_custom_adapter_named_chroma_setup_keeps_normal_output_rules() {
     assert!(!f.output().exists());
     f.config.adapters.get_mut("chroma-setup").unwrap().output = Some("templates/test".into());
     assert!(f.apply("nord").is_err());
+}
+
+#[test]
+fn missing_or_unparseable_backup_preserves_manifest_and_output() {
+    for missing in [false, true] {
+        let f = Fixture::new();
+        f.apply("nord").unwrap();
+        let state = State::load(&f.paths.state).unwrap();
+        let path = f
+            .paths
+            .state
+            .join("transactions")
+            .join(format!("{}.toml", state.head.as_ref().unwrap()));
+        let original_backup = fs::read(&path).unwrap();
+        let manifest = fs::read(f.paths.state.join("state.toml")).unwrap();
+        let output = fs::read(f.output()).unwrap();
+        if missing {
+            fs::remove_file(&path).unwrap();
+        } else {
+            fs::write(&path, b"not valid TOML").unwrap();
+        }
+        assert!(rollback::rollback(&f.paths, &f.config, true).is_err());
+        assert_eq!(fs::read(f.output()).unwrap(), output);
+        assert_eq!(
+            fs::read(f.paths.state.join("state.toml")).unwrap(),
+            manifest
+        );
+        chroma::safe_fs::write(&path, &original_backup, true).unwrap();
+        rollback::rollback(&f.paths, &f.config, true).unwrap();
+        assert!(!f.output().exists());
+    }
+}
+
+#[test]
+fn every_disabled_adapter_skips_missing_inputs_outputs_and_reload() {
+    let mut f = Fixture::new();
+    f.config.general.auto_reload = true;
+    let marker = f._root.path().join("unexpected-reload");
+    for (name, _, _) in chroma::adapters::BUILTINS {
+        f.config.adapters.insert(
+            (*name).into(),
+            Adapter {
+                template: Some("missing-template".into()),
+                config_path: Some("missing-main".into()),
+                output: Some(format!("generated/disabled-{name}")),
+                reload: vec!["/usr/bin/touch".into(), marker.to_str().unwrap().into()],
+                ..Default::default()
+            },
+        );
+    }
+    for kind in chroma::integration::colors::Kind::ALL {
+        let name = format!("desktop-{}", kind.id());
+        f.config.adapters.insert(
+            name.clone(),
+            Adapter {
+                desktop: Some(kind),
+                config_path: Some("missing-main".into()),
+                output: Some(format!("generated/disabled-{name}")),
+                reload: vec!["/usr/bin/touch".into(), marker.to_str().unwrap().into()],
+                ..Default::default()
+            },
+        );
+    }
+    assert_eq!(f.apply("nord").unwrap(), 1);
+    assert!(!marker.exists());
+    assert_eq!(
+        fs::read_dir(f.output().parent().unwrap()).unwrap().count(),
+        1
+    );
+    rollback::rollback(&f.paths, &f.config, true).unwrap();
+}
+
+#[test]
+fn killed_apply_releases_lock_and_recovers_from_durable_pending_state() {
+    use std::{
+        process::{Command, Stdio},
+        thread,
+        time::{Duration, Instant},
+    };
+    let f = Fixture::new();
+    let root = f._root.path();
+    let marker = root.join("reload-ready");
+    let script = root.join("wait-for-test");
+    fs::write(&script, "#!/bin/sh\nprintf ready > \"$1\"\ncount=0\nwhile [ -e \"$1\" ] && [ \"$count\" -lt 500 ]; do\n  sleep 0.01\n  count=$((count + 1))\ndone\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut config = f.config.clone();
+    config.general.auto_reload = true;
+    let adapter = config.adapters.get_mut("test").unwrap();
+    adapter.reload = vec![
+        script.to_str().unwrap().into(),
+        marker.to_str().unwrap().into(),
+    ];
+    adapter.reload_timeout_ms = Some(30_000);
+    fs::write(
+        f.paths.config.join("config.toml"),
+        toml::to_string(&config).unwrap(),
+    )
+    .unwrap();
+    let command = || {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_chroma"));
+        cmd.arg("--config-dir").arg(&f.paths.config);
+        cmd
+    };
+    let mut child = command()
+        .args(["apply", "nord"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() && Instant::now() < deadline {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    if !marker.exists() {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("apply never reached reload barrier");
+    }
+    // The first invocation holds the same state lock through its reload.
+    let overlapping = command()
+        .args(["apply", "paper", "--no-reload"])
+        .output()
+        .unwrap();
+    let blocked = !overlapping.status.success()
+        && String::from_utf8_lossy(&overlapping.stderr).contains("another Chroma operation");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    fs::remove_file(&marker).unwrap();
+    assert!(
+        blocked,
+        "overlapping invocation was not rejected by the lock"
+    );
+    let pending = State::load(&f.paths.state).unwrap().pending.unwrap();
+    backup::load(&f.paths.state, &pending.transaction).unwrap();
+    assert!(f.output().exists());
+    assert!(!command().arg("current").output().unwrap().status.success());
+    assert!(
+        !command()
+            .args(["apply", "paper", "--no-reload"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let recovered = command()
+        .args(["rollback", "--no-reload"])
+        .output()
+        .unwrap();
+    assert!(
+        recovered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    assert!(!f.output().exists());
+    let state = State::load(&f.paths.state).unwrap();
+    assert!(state.pending.is_none() && state.current.is_none());
+    assert!(
+        !command()
+            .args(["rollback", "--no-reload"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
 }
