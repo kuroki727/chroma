@@ -33,6 +33,10 @@ pub fn generated(kind: Kind, source: &[u8], generated: &[u8]) -> Result<()> {
             !kdl_has_include(std::str::from_utf8(source)?)?,
             "existing Niri includes require manual composed validation"
         );
+        ensure!(
+            !kdl_has_include(std::str::from_utf8(generated)?)?,
+            "generated Niri includes are forbidden during isolated validation"
+        );
     } else {
         let ini = crate::adapters::discovery::ini(std::str::from_utf8(generated)?)?;
         ensure!(
@@ -55,10 +59,7 @@ pub fn generated(kind: Kind, source: &[u8], generated: &[u8]) -> Result<()> {
         let colors = temp.path().join("colors.kdl");
         std::fs::write(&colors, generated)?;
         let source = std::str::from_utf8(source)?;
-        std::fs::write(
-            &file,
-            format!("{source}\ninclude \"{}\"\n", colors.display()),
-        )?;
+        std::fs::write(&file, super::niri::candidate(source, &colors)?)?;
         argv.extend([
             "validate".into(),
             "-c".into(),
@@ -81,7 +82,7 @@ pub fn generated(kind: Kind, source: &[u8], generated: &[u8]) -> Result<()> {
 
 /// Identify bare include tokens outside KDL comments/strings. Include spellings
 /// separated by tabs, newlines or comments must not escape offline validation.
-fn kdl_has_include(source: &str) -> Result<bool> {
+pub(crate) fn kdl_has_include(source: &str) -> Result<bool> {
     let bytes = source.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -102,6 +103,40 @@ fn kdl_has_include(source: &str) -> Result<bool> {
                 }
             }
             ensure!(depth == 0, "unterminated KDL comment");
+        } else if bytes[i] == b'r' && bytes.get(i + 1).is_some_and(|b| matches!(b, b'#' | b'"')) {
+            // KDL v1 raw strings: r"...", r#"..."#, r##"..."##, etc.
+            // Their contents are literal; neither backslashes nor comment markers
+            // terminate them. Compare the decoded name too, so raw include node
+            // names cannot evade the same conservative quoted-name policy.
+            let prefix = i;
+            i += 1;
+            while bytes.get(i) == Some(&b'#') {
+                i += 1;
+            }
+            ensure!(
+                bytes.get(i) == Some(&b'"'),
+                "invalid raw KDL string delimiter"
+            );
+            ensure!(
+                !bytes[i..].starts_with(b"\"\"\""),
+                "multiline KDL strings require manual composed validation"
+            );
+            let hashes = i - prefix - 1;
+            i += 1;
+            let start = i;
+            while i < bytes.len()
+                && !(bytes[i] == b'"'
+                    && bytes
+                        .get(i + 1..i + 1 + hashes)
+                        .is_some_and(|end| end.iter().all(|b| *b == b'#')))
+            {
+                i += 1;
+            }
+            ensure!(i < bytes.len(), "unterminated raw KDL string");
+            if &bytes[start..i] == b"include" {
+                return Ok(true);
+            }
+            i += 1 + hashes;
         } else if bytes[i] == b'"' {
             ensure!(
                 i == 0 || bytes[i - 1] != b'#',
@@ -174,5 +209,49 @@ mod tests {
                 .to_string()
                 .contains("include chains")
         );
+    }
+
+    #[test]
+    fn bounded_raw_regex_strings_are_not_includes() {
+        assert!(
+            !kdl_has_include(
+                "window-rule { match app-id=r#\"firefox$\"# title=\"^Picture-in-Picture$\"; }"
+            )
+            .unwrap()
+        );
+        assert!(!kdl_has_include("node key=r###\"quoted \"# // /* include payload\"###").unwrap());
+    }
+
+    #[test]
+    fn generated_niri_include_chains_are_rejected_before_native_validation() {
+        let error =
+            generated(Kind::Niri, b"layout {}", b"include \"/untrusted/config\"").unwrap_err();
+        assert!(
+            error.to_string().contains("generated Niri includes"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn raw_delimiters_cannot_hide_include_nodes() {
+        for source in [
+            "r\"include\" \"/untrusted\"",
+            "r#\"include\"# \"/untrusted\"",
+            "r###\"include\"### \"/untrusted\"",
+            "node key=r#\"value\"#; include\t\"/untrusted\"",
+            "node key=r##\"embedded \"#\"##; \"include\" \"/untrusted\"",
+        ] {
+            assert!(kdl_has_include(source).unwrap(), "{source}");
+        }
+        for source in [
+            "node r#\"unterminated",
+            "node r##\"wrong\"#",
+            "node r###missing",
+            "node #\"KDL-v2-raw\"#",
+            "node \"escaped\\nstring\"",
+            "node \"\"\"multi\"\"\"",
+        ] {
+            assert!(kdl_has_include(source).is_err(), "{source}");
+        }
     }
 }

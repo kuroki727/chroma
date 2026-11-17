@@ -230,12 +230,19 @@ PNG and codec-native JPEG scaling remain future work.
 ## Final audit safety restrictions
 
 Review installation refuses existing Fuzzel include chains. Niri offline
-validation refuses include tokens (including quoted names and non-space
-separators), and conservatively leaves raw, escaped or multiline KDL strings for
-manual composed validation. This avoids allowing a temporary validation process
+validation refuses include tokens (including quoted/raw names and non-space
+separators). Bounded KDL v1 raw strings are recognized without changing their
+contents; escaped and triple-quoted strings remain manual. Generated fragments
+are checked for include chains too, before any native validator is invoked.
+This avoids allowing a temporary validation process
 to follow unchecked source paths. Normal generated Niri color includes remain
 supported, and the guided Fuzzel fragment workflow supports its one explicit
 managed include without copying or following it.
+
+The separately reviewed [T470 Niri candidate procedure](T470_NIRI.md) preserves
+the complete main configuration and appends one explicit include. Its optional
+guarded installation/reversal helper is separate from `integrate`; writing the
+live config requires approval because Niri's watcher activates it immediately.
 
 Source/configuration snapshots are rechecked after native validation, and pending
 palette recovery blocks bundle installation/removal. Review previews escape

@@ -1,6 +1,7 @@
 //! Review bundles are separate from palette transactions. No command here edits
 //! desktop configuration, enables an adapter, or executes a reload.
 pub mod colors;
+pub mod niri;
 pub mod validate;
 
 use crate::{
