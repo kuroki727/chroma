@@ -79,6 +79,11 @@ pub fn output_path(name: &str, adapter: &Adapter, paths: &Paths) -> Result<PathB
 
 pub fn render(name: &str, adapter: &Adapter, paths: &Paths, palette: &Palette) -> Result<Output> {
     let mut inputs = safe_fs::Inputs::default();
+    ensure!(
+        !adapter.island_readable
+            || adapter.desktop == Some(crate::integration::colors::Kind::Island),
+        "island_readable requires desktop = island"
+    );
     if let Some(kind) = adapter.desktop {
         ensure!(
             adapter.template.is_none() && adapter.alpha.is_empty(),
@@ -96,8 +101,11 @@ pub fn render(name: &str, adapter: &Adapter, paths: &Paths, palette: &Palette) -
             "desktop adapters write only separate generated files"
         );
         let bytes = inputs.read(&source)?.context("desktop source is missing")?;
-        let rendered =
-            crate::integration::colors::render(kind, std::str::from_utf8(&bytes)?, palette)?;
+        let rendered = if adapter.island_readable {
+            crate::integration::island::render(std::str::from_utf8(&bytes)?, palette)?
+        } else {
+            crate::integration::colors::render(kind, std::str::from_utf8(&bytes)?, palette)?
+        };
         return Ok(Output {
             name: name.into(),
             path,

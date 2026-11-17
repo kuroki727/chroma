@@ -1,0 +1,5 @@
+enabled = true
+desktop = "island"
+config_path = "/home/kuroki/.config/island/style.css"
+output = "generated/desktop-island.css"
+island_readable = true

@@ -7,13 +7,14 @@
 #include <iterator>
 
 int main(int argc, char** argv) {
-    if (argc != 2) return 2;
+    if (argc != 2 && argc != 3) return 2;
     std::ifstream file(argv[1]);
     if (!file) return 2;
     std::string css((std::istreambuf_iterator<char>(file)), {});
-    Style style{};
+    Settings settings{};
     std::string error;
-    if (!apply_style(css, style, error)) return 1;
+    if (!load_settings("", argv[1], settings, error)) return 1;
+    const Style& style = settings.style;
     for (size_t start; (start = css.find("/*")) != std::string::npos;) {
         auto end = css.find("*/", start + 2);
         if (end == std::string::npos) return 1;
@@ -34,5 +35,22 @@ int main(int argc, char** argv) {
         }
         pos = end + 1;
     }
-    return count >= 11 ? 0 : 1;
+    if (count < 11) return 1;
+    if (argc == 3) {
+        if (strcmp(argv[2], "--dump")) return 2;
+        auto color = [](const char* name, const RGBA& c) {
+            printf("%s %.9f %.9f %.9f %.9f\n", name, c.r, c.g, c.b, c.a);
+        };
+        color("background", style.bg); color("border", style.border);
+        color("time", style.time.color); color("date", style.date.color);
+        color("text", style.text.color); color("title", style.title.color);
+        color("body", style.body.color); color("label", style.label.color);
+        color("value", style.value.color); color("flash", style.flash.color);
+        color("dnd", style.dnd.color); color("track", style.track);
+        color("fill", style.fill); color("tile", style.tile); color("tile-on", style.tile_on);
+        printf("sizes %.9f %.9f %.9f %.9f %.9f %.9f %.9f %.9f %.9f\n",
+          style.border_w, style.time.size, style.date.size, style.text.size, style.title.size,
+          style.body.size, style.label.size, style.value.size, style.flash.size);
+    }
+    return 0;
 }

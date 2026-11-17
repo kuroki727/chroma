@@ -211,6 +211,10 @@ PNG and codec-native JPEG scaling remain future work.
 
 ## Deferred work and limitations
 
+For the inspected C++ Island, an optional `island_readable = true` desktop adapter
+profile and staged CLI-style activation are documented in [T470_ISLAND.md](T470_ISLAND.md).
+It is explicit opt-in; the legacy renderer and live adapter remain unchanged.
+
 - Automatic desktop wiring and its surgical rollback are not implemented. Review
   artifacts, explicit activation and separate user backups are required.
 - Qt6ct scheme generation is deferred. The installed package is **qt6ct-kde** and

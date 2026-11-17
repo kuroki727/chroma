@@ -142,6 +142,9 @@ pub struct Adapter {
     pub enabled: bool,
     /// Opt-in application-aware rendering from an existing read-only source.
     pub desktop: Option<crate::integration::colors::Kind>,
+    /// Opt-in contrast-aware styling for the inspected standalone C++ Island.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub island_readable: bool,
     /// An existing application's config, for diagnostics only. Never edited.
     pub config_path: Option<String>,
     pub template: Option<String>,

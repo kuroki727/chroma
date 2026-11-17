@@ -1,0 +1,34 @@
+/* island: style. Colours are #rgb, #rrggbb, #rrggbbaa or rgba(r, g, b, a).
+   Apply changes with `island ctl reload`. */
+
+/* The island itself. */
+island {
+  background: #0E0B09;
+  border-color: #75706D;
+  border-width: 1.2px;
+}
+
+/* Clock shown on hover. */
+.time  { color: #F4F1EF; font-size: 40px; }
+.date  { color: #BAB5B1; font-size: 14px; }
+
+/* One-line messages and the compact clock. */
+.text  { color: #F4F1EF; font-size: 14px; }
+
+/* `notify "Title" "Body"` */
+.title { color: #EDA76F; font-size: 16px; }
+.body  { color: #F4F1EF; font-size: 14px; }
+
+/* `bar "Label" 42` */
+.label { color: #BAB5B1; font-size: 13px; }
+.value { color: #F4F1EF; font-size: 13px; }
+.track { background: #635F5C; }
+.fill  { background: #EDA76F; }
+
+flash { color: #EDA76F; }
+
+dnd { color: #8B504B; }
+
+tile { background: #1C1816; }
+
+tile-on { background: #3B1F05; }

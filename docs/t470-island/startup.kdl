@@ -1,0 +1,1 @@
+spawn-at-startup "/home/kuroki/.local/bin/island" "-s" "/home/kuroki/.config/chroma/generated/desktop-island.css"
