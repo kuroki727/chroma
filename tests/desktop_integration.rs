@@ -218,6 +218,38 @@ fn kitty_maps_complete_ansi_palette_and_uses_color_only_include() {
 }
 
 #[test]
+fn kitty_indented_directives_preserve_whitespace_and_recolor_every_key() {
+    let source = kitty()
+        .lines()
+        .enumerate()
+        .map(|(i, line)| format!("{}{line}\r\n", if i % 2 == 0 { "  " } else { "\t" }))
+        .collect::<String>();
+    let palette = presets::get("nord").unwrap();
+    let rendered = colors::render(Kind::Kitty, &source, &palette).unwrap();
+    for i in 0..16 {
+        assert!(rendered.contains(&format!(
+            "color{i} {}\n",
+            palette.variables()[&format!("ansi{i}")]
+        )));
+    }
+    assert!(!rendered.contains("font"));
+    let recolored = colors::recolor(Kind::Kitty, &source, &palette).unwrap();
+    assert_eq!(
+        without_colors(Kind::Kitty, &source),
+        without_colors(Kind::Kitty, &recolored)
+    );
+    // A later, indented duplicate must not evade conflict detection either.
+    assert!(
+        colors::render(
+            Kind::Kitty,
+            &format!("{}\n  color0 #654321\n", kitty()),
+            &palette
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn niri_native_include_is_valid_and_only_changes_required_colors() {
     let rendered = colors::render(Kind::Niri, NIRI, &presets::get("nord").unwrap()).unwrap();
     assert!(rendered.contains("urgent-color"));
