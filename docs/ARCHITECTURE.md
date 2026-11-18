@@ -61,10 +61,16 @@ See [SECURITY.md](SECURITY.md) for concurrent-writer, durability and metadata li
 
 PNG/JPEG input is opened nonblocking, checked as regular and copied through a
 bounded read. Decoder headers are checked against dimension/pixel/output budgets
-before pixel decoding. A 128×128 thumbnail supplies a sorted, weighted histogram.
-Deterministic farthest-point seeding and Lloyd k-means operate in OKLab. Hue/chroma
-selection, fixed layer lightnesses, gamut reduction and contrast refinement produce
-dark/light semantic palettes. No randomness, subprocesses or services participate.
+before pixel decoding. Up to 128×128 actual stratified pixels supply an alpha-weighted,
+sorted histogram, without a full-size RGBA conversion or thumbnail color blending.
+Population-aware seeding and Lloyd k-means operate in OKLab; close centers merge
+and tiny noise clusters are discarded. `generator::extract` exposes representatives
+and normalized populations for the offline report example. Source hue/chroma,
+scene-influenced tonal ranges, gamut reduction and contrast refinement produce
+separate dark/light palettes with explicit ANSI entries. The generator enforces
+4.5:1 for text/ANSI and 3:1 for borders against the documented backgrounds;
+user-palette validation and preset defaults remain compatible. No randomness,
+subprocesses or services participate in generation.
 
 Templates only reference validated colors or locally configured alpha bytes.
 Literal escaping makes the format usable with CSS, INI, JSON, KDL, QML and other
