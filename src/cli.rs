@@ -25,6 +25,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Opt-in wallpaper hook and synchronization controls. Never changes wallpaper.
+    Wallpaper {
+        #[command(subcommand)]
+        command: crate::wallpaper::Command,
+    },
     /// Discover adapters and explicitly configure Chroma fragment generation.
     Adapters {
         #[command(subcommand)]
@@ -132,6 +137,9 @@ fn desktop_root(paths: &Paths, isolated: bool, desktop: Option<PathBuf>) -> Resu
 pub fn run(cli: Cli) -> Result<()> {
     let isolated = cli.config_dir.is_some();
     let paths = Paths::discover(cli.config_dir, cli.state_dir)?;
+    if let Commands::Wallpaper { command } = cli.command {
+        return crate::wallpaper::run(&paths, command);
+    }
     if let Commands::Adapters { command } = cli.command {
         return match command {
             AdapterCommands::List => {
@@ -238,7 +246,9 @@ pub fn run(cli: Cli) -> Result<()> {
     }
     let mut config = Config::load(&paths)?;
     match cli.command {
-        Commands::Integrate { .. } | Commands::Adapters { .. } => unreachable!(),
+        Commands::Wallpaper { .. } | Commands::Integrate { .. } | Commands::Adapters { .. } => {
+            unreachable!()
+        }
         Commands::Init => unreachable!(),
         Commands::List { names_only } => {
             for (id, palette) in palette::list(&paths.config)? {

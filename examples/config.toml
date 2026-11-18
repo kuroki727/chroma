@@ -3,6 +3,13 @@ default_palette = "rustwood"
 # Commands only run after successful writes; off until explicitly enabled.
 auto_reload = false
 
+# Explicit post-success hook, off by default. No wallpaper polling or daemon.
+# See docs/WALLPAPER_SYNC.md for chroma-wall and the existing wall picker.
+[wallpaper]
+enabled = false
+debounce_ms = 200
+wait_timeout_ms = 30000
+
 # Defaults generate files under Chroma's generated/ directory.
 # Manually add native includes to your application's config after review.
 [adapters.niri]
@@ -31,6 +38,9 @@ enabled = false
 
 [adapters.kitty]
 enabled = false
+# Optional noninteractive validation for wallpaper changes, including dry-run:
+# validate = ["/absolute/path/to/validator", "{file}"]
+# validation_timeout_ms = 3000
 
 [adapters.foot]
 enabled = false
