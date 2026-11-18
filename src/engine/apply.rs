@@ -202,6 +202,9 @@ fn apply_inner(
         .context("another Chroma operation is running, or state is unsafe")?;
     let state = State::load(&paths.state)?;
     let plan = plan(paths, config, &palette, &state)?;
+    // Manual palette selection supersedes wallpaper hooks already waiting on
+    // this writer lock. Wallpaper commits call commit directly, not apply_inner.
+    _lock.advance_epoch()?;
     commit(
         paths,
         config,

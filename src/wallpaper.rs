@@ -100,6 +100,7 @@ fn changed(paths: &Paths, image: &Path, dry_run: bool, no_reload: bool) -> Resul
         let state = State::load(&paths.state)?;
         let config = automatic_config(config);
         let plan = apply::plan(paths, &config, &selected, &state)?;
+        check_managed_outputs(&state, &plan)?;
         validate(&config, &plan)?;
         apply::preview_transaction(&plan, &state, ID, &selected)?;
         for output in plan.outputs {
@@ -124,15 +125,17 @@ fn changed(paths: &Paths, image: &Path, dry_run: bool, no_reload: bool) -> Resul
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
     )
     .into_bytes();
-    {
+    let epoch = {
         let _registration = wait_lock(&queue, deadline)?;
+        let epoch = state_dir.operation_epoch()?;
         safe_fs::write(&queue_path.join("latest"), &token, true)?;
-    }
+        epoch
+    };
     thread::sleep(Duration::from_millis(config.wallpaper.debounce_ms));
     let _lock = wait_lock(&state_dir, deadline)?;
     state_dir.check_path(&paths.state)?;
     queue.check_path(&queue_path)?;
-    if !latest(&queue, &token)? {
+    if !latest(&queue, &token)? || state_dir.operation_epoch()? != epoch {
         println!("Wallpaper request superseded; nothing applied.");
         return Ok(());
     }
@@ -150,14 +153,26 @@ fn changed(paths: &Paths, image: &Path, dry_run: bool, no_reload: bool) -> Resul
     );
     let selected = generator::generate(image, Mode::Dark, "Wallpaper")?;
     let plan = apply::plan(paths, &config, &selected, &state)?;
+    check_managed_outputs(&state, &plan)?;
     validate(&config, &plan)?;
     apply::preview_transaction(&plan, &state, ID, &selected)?;
-    if !latest(&queue, &token)? {
+    if !latest(&queue, &token)? || state_dir.operation_epoch()? != epoch {
         println!("Wallpaper request superseded; nothing applied.");
         return Ok(());
     }
     // Compare real outputs as well as the palette. A rollback, new adapter or
     // external edit must never be hidden by an image-path/hash-only cache.
+    plan.inputs.check()?;
+    state.check(&paths.state)?;
+    for ((dir, name), entry) in plan.dirs.iter().zip(&plan.entries) {
+        dir.check_path(entry.path.parent().context("missing output parent")?)?;
+        dir.check_target(name)?;
+        ensure!(
+            dir.read(name)? == entry.before,
+            "output changed during wallpaper validation: {}",
+            entry.path.display()
+        );
+    }
     if state
         .current
         .as_ref()
@@ -190,6 +205,23 @@ fn automatic_config(mut config: Config) -> Config {
         adapter.allow_overwrite = false;
     }
     config
+}
+
+fn check_managed_outputs(state: &State, plan: &apply::Plan) -> Result<()> {
+    for entry in &plan.entries {
+        if let Some(expected) = state
+            .current
+            .as_ref()
+            .and_then(|a| a.files.get(&entry.path))
+        {
+            ensure!(
+                entry.before.as_ref() == Some(expected),
+                "managed output changed or was deleted; automatic synchronization preserves user changes: {}",
+                entry.path.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn validate(config: &Config, plan: &apply::Plan) -> Result<()> {
@@ -299,6 +331,7 @@ fn configure(paths: &Paths, enabled: bool, dry_run: bool) -> Result<()> {
     }
     let state_dir = Dir::open(&paths.state, true)?;
     let _lock = state_dir.lock()?;
+    _lock.advance_epoch()?;
     apply::commit(paths, &config, (&id, selected), true, &state, &plan, |_| {
         Ok(())
     })?;

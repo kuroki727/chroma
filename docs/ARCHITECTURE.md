@@ -57,6 +57,13 @@ schema. The latest-token file is coordination metadata only. Enable/disable
 submits a `chroma-setup` config entry to the same journal. See
 [WALLPAPER_SYNC.md](WALLPAPER_SYNC.md) for ordering and failure boundaries.
 
+Manual apply, rollback and wallpaper controls advance a cancellation epoch
+inside the existing writer lock file, without replacing its inode. Older admitted
+hooks exit after acquiring the lock instead of undoing the manual operation.
+Epoch data is outside the manifest/history schema. Duplicate shortcuts recheck
+the complete plan and current destinations; automatic hooks preserve deletion
+of previously managed outputs as an external edit.
+
 Recovery marks restoration pending, then visits entries in reverse order. Matching
 before snapshots are already restored; matching after snapshots can be restored
 or removed. Different current data is preserved and reported. Restoration is

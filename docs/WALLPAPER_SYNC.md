@@ -18,7 +18,10 @@ based on main, all open and unmerged.
 This feature branch reuses the complete commits from #4 (recovery/Kitty fixes)
 and #5 (wallpaper extraction/contrast), retaining their regression tests. They
 are prerequisites, not claims that those PRs were merged. Before merging this
-feature, land/rebase those prerequisites through their own review. #6–#8 contain
+feature, land those prerequisites through their own review, then **squash #9**
+to avoid bringing copied prerequisite commits into main. See the
+[final integration audit](T470_WALLPAPER_INTEGRATION_AUDIT.md) for the rehearsal,
+exact merge sequence and installation gates. #6–#8 contain
 separate opt-in desktop preparations and are not incorporated or required. The
 small generated-Niri include refusal also identified in #7 is included here
 because hook validation must never follow external includes; reconcile that
@@ -191,10 +194,19 @@ and reload only when all match. A different path containing identical input is
 also a duplicate. Rollback or a newly enabled adapter is not masked by an image
 cache. There is no cache or schema change to recover separately.
 
+Manual apply, rollback and wallpaper enable/disable advance a cancellation epoch
+inside the existing writer lock file. An already registered hook with an older
+epoch exits without undoing the manual operation. The lock inode stays the same;
+recovery does not depend on a readable hook queue. Do not mix old and new Chroma
+binaries during the trial. A genuinely new event afterward can still recolor.
+
 Automatic operation refuses unmanaged/edited outputs even when the adapter's
 manual `allow_overwrite` setting is true. Reconcile customizations explicitly in
-templates or through the normal reviewed manual workflow. Existing safe-file
-checks, input provenance, staging/fsync, pending journal, per-file atomic rename,
+templates or through the normal reviewed manual workflow. A user's deletion of
+a previously managed output is also preserved; only a reviewed manual apply
+should recreate it. Inputs and current destinations are rechecked before the
+duplicate shortcut. Existing safe-file checks, input provenance, staging/fsync,
+pending journal, per-file atomic rename,
 backups and conflict-aware restoration are reused. Failed extraction/validation
 leaves the prior theme intact; non-dry hooks may leave coordination metadata.
 Failed writes/reloads recover the prior files/state when possible. External edit
@@ -229,6 +241,11 @@ are outside the initial scope. Live appearance and daily-use reload behavior
 require a later user-controlled desktop check.
 
 ## Verification executed
+
+This records the initial implementation. The later
+[integration audit](T470_WALLPAPER_INTEGRATION_AUDIT.md) adds regression coverage,
+the wall checker and a duplicate-free merge rehearsal; use updated PR checks
+for the latest audited head.
 
 Executed on 2026-11-18 in the available Linux environment identifying as ThinkPad
 T470, with Rust 1.100.0, Niri 26.04 and Fuzzel 1.15.0. All writes/applications

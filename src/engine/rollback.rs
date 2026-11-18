@@ -151,6 +151,9 @@ pub fn rollback(paths: &Paths, config: &Config, no_reload: bool) -> Result<()> {
             || (state.current == transaction.after && state.head.as_deref() == Some(&id)),
         "recovery state does not match backup; no files changed"
     );
+    // An older admitted wallpaper request must not undo explicit recovery.
+    // This never reads the hook queue or local adapter configuration.
+    _lock.advance_epoch()?;
     // Mark rollback before restoring anything; crashes can always be retried.
     let previous = state.clone();
     state.pending = Some(Pending {

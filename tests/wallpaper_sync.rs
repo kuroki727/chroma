@@ -631,3 +631,113 @@ fn validator_timeout_preserves_theme_and_validation_configuration_is_checked() {
         );
     }
 }
+
+struct ResumeOnDrop(rustix::process::Pid);
+impl Drop for ResumeOnDrop {
+    fn drop(&mut self) {
+        let _ = rustix::process::kill_process(self.0, rustix::process::Signal::CONT);
+    }
+}
+
+fn pause_worker(worker: &Child) -> ResumeOnDrop {
+    let pid = rustix::process::Pid::from_raw(worker.id() as i32).unwrap();
+    let guard = ResumeOnDrop(pid);
+    rustix::process::kill_process(pid, rustix::process::Signal::STOP).unwrap();
+    wait_until(|| {
+        fs::read_to_string(format!("/proc/{}/status", worker.id()))
+            .unwrap()
+            .lines()
+            .any(|line| line.starts_with("State:") && line.contains('T'))
+    });
+    guard
+}
+
+#[test]
+fn manual_rollback_cancels_an_already_registered_waiting_hook() {
+    let f = Fixture::new(true);
+    f.changed("a.png");
+    let restored = f.outputs();
+    f.changed("b.png");
+    let dir = Dir::open(&f.paths().state, false).unwrap();
+    let lock = dir.lock().unwrap();
+    let before_token = fs::read(f.marker()).unwrap();
+    let worker = f.spawn("b.png");
+    wait_until(|| fs::read(f.marker()).unwrap() != before_token);
+    let stopped = pause_worker(&worker);
+    drop(lock);
+    let rollback = f.run(&["rollback", "--no-reload"]);
+    let state = f.manifest();
+    drop(stopped);
+    success(worker.wait_with_output().unwrap());
+    success(rollback);
+    assert_eq!(f.outputs(), restored, "waiting hook must not undo rollback");
+    assert_eq!(f.manifest(), state);
+    // A genuinely new event after rollback still works.
+    f.changed("b.png");
+    f.assert_palette("b.png");
+}
+
+#[test]
+fn manual_palette_selection_cancels_an_already_registered_waiting_hook() {
+    let f = Fixture::new(true);
+    let dir = Dir::open(&f.paths().state, true).unwrap();
+    let lock = dir.lock().unwrap();
+    let worker = f.spawn("b.png");
+    wait_until(|| f.marker().exists());
+    let stopped = pause_worker(&worker);
+    drop(lock);
+    let manual = f.run(&["apply", "nord", "--no-reload"]);
+    let selected = f.manifest();
+    drop(stopped);
+    success(worker.wait_with_output().unwrap());
+    success(manual);
+    assert_eq!(
+        f.manifest(),
+        selected,
+        "waiting hook must not undo manual selection"
+    );
+}
+
+#[test]
+fn automatically_deleted_managed_output_is_preserved_as_a_user_change() {
+    let f = Fixture::new(true);
+    f.changed("a.png");
+    let before = f.manifest();
+    let removed = f.config().join("generated/kitty.conf");
+    fs::remove_file(&removed).unwrap();
+    let output = f.run(&["wallpaper", "changed", &f.image("b.png")]);
+    assert!(
+        !output.status.success(),
+        "automatic hook must not recreate a deleted managed output"
+    );
+    assert!(!removed.exists());
+    assert_eq!(f.manifest(), before);
+}
+
+#[test]
+fn a_validator_edit_during_a_duplicate_request_cannot_be_reported_as_already_applied() {
+    let f = Fixture::new(true);
+    f.changed("a.png");
+    let before = f.manifest();
+    let target = f.config().join("generated/kitty.conf");
+    let validator = f.script("edit-output", &format!("printf 'user change' > {target:?}"));
+    f.write_config(true, 0, &format!("validate=[{validator:?}, '{{file}}']"));
+    let output = f.run(&["wallpaper", "changed", &f.image("a.png")]);
+    assert!(!output.status.success());
+    assert_eq!(fs::read(target).unwrap(), b"user change");
+    assert_eq!(f.manifest(), before);
+}
+
+#[test]
+fn corrupt_hook_coordination_does_not_block_emergency_file_recovery() {
+    let f = Fixture::new(true);
+    f.changed("a.png");
+    let before = f.outputs();
+    f.changed("b.png");
+    fs::remove_file(f.marker()).unwrap();
+    symlink(f.root.path().join("must-not-be-written"), f.marker()).unwrap();
+    fs::write(f.config().join("config.toml"), "broken config = [").unwrap();
+    f.ok(&["rollback", "--no-reload"]);
+    assert_eq!(f.outputs(), before);
+    assert!(!f.root.path().join("must-not-be-written").exists());
+}
