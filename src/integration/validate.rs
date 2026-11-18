@@ -30,6 +30,10 @@ pub fn generated(kind: Kind, source: &[u8], generated: &[u8]) -> Result<()> {
     }
     if kind == Kind::Niri {
         ensure!(
+            !kdl_has_include(std::str::from_utf8(generated)?)?,
+            "generated Niri includes require manual composed validation"
+        );
+        ensure!(
             !kdl_has_include(std::str::from_utf8(source)?)?,
             "existing Niri includes require manual composed validation"
         );

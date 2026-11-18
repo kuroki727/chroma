@@ -8,6 +8,7 @@ dependency. The core is independent of the target application configuration lang
 | `main`, `cli` | clap parsing, command orchestration, diagnostics and exit codes |
 | `config` | Strict trusted TOML schema, XDG/override paths and adapter policy |
 | `palette` | Semantic/ANSI model, strict colors, presets and wallpaper extraction |
+| `wallpaper` | Opt-in post-success hook, debounce/coalescing, validation and shared transaction orchestration |
 | `adapters` | Separate output resolution, safe text substitution and bounded argv |
 | `engine/apply` | Preflight, staged outputs and transaction orchestration |
 | `engine/backup` | Private serialized transactions and transaction identifiers |
@@ -46,6 +47,22 @@ destinations, complete after-state file maps and correspondence between the
 manifest and transaction endpoints. This protects against structurally corrupt
 records, not malicious same-user tampering. The on-disk format is unchanged;
 valid journals from the initial implementation remain supported.
+
+The wallpaper hook registers a private request token under a short separate
+lock, then takes the existing state lock through extraction, planning, validation,
+duplicate comparison and commit. New requests supersede waiting/planning workers;
+requests arriving during commit are applied by their own waiting invocations.
+There is no background queue consumer, persistent palette cache or new state
+schema. The latest-token file is coordination metadata only. Enable/disable
+submits a `chroma-setup` config entry to the same journal. See
+[WALLPAPER_SYNC.md](WALLPAPER_SYNC.md) for ordering and failure boundaries.
+
+Manual apply, rollback and wallpaper controls advance a cancellation epoch
+inside the existing writer lock file, without replacing its inode. Older admitted
+hooks exit after acquiring the lock instead of undoing the manual operation.
+Epoch data is outside the manifest/history schema. Duplicate shortcuts recheck
+the complete plan and current destinations; automatic hooks preserve deletion
+of previously managed outputs as an external edit.
 
 Recovery marks restoration pending, then visits entries in reverse order. Matching
 before snapshots are already restored; matching after snapshots can be restored

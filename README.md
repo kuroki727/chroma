@@ -6,6 +6,23 @@ wallpaper. No daemon, network service, wallpaper setter, or desktop session is
 required. MIT licensed. Version 0.2 adds read-only adapter discovery, guided fragment enablement, and application-aware review bundles with manual activation.
 See [desktop integration and limitations](docs/DESKTOP_INTEGRATION.md).
 
+Optional wallpaper synchronization uses an explicit hook after the wallpaper
+manager succeeds. Review the [wallpaper hook guide](docs/WALLPAPER_SYNC.md) for
+setup, concurrency, recovery and Island limitations. It starts disabled:
+
+```sh
+chroma wallpaper enable --dry-run
+chroma wallpaper enable
+chroma wallpaper changed /absolute/path/wallpaper.jpg --dry-run
+chroma wallpaper changed /absolute/path/wallpaper.jpg
+chroma wallpaper disable
+```
+
+`scripts/chroma-wall` optionally wraps `awww img` and calls the hook only on
+success. Existing wallpaper scripts and desktop configuration are never installed
+or edited automatically. Enabled adapters and native imports must already be
+configured; application reloads retain their existing separate opt-in settings.
+
 Chroma **never edits your application's main configuration**. You choose adapters,
 review generated files, and add imports yourself. Every shipped adapter starts
 disabled. Fonts, geometry, keybindings, layout, animations and opacity are outside
