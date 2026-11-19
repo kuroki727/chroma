@@ -1,3 +1,7 @@
+> Historical preparation report for commit 317025f. Current implementation, activation
+> status and commands are in [HIGH_RES_ISLAND.md](HIGH_RES_ISLAND.md). The approval
+> sequence below describes the earlier task, not a requirement of the current work.
+
 # Island C++ integration candidate — no live installation
 
 This work is preparation only. Island was not launched, reloaded, signalled or

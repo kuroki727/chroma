@@ -293,6 +293,11 @@ pub(crate) fn commit(
         check_committed_outputs(plan)?;
         if reload_enabled {
             for output in &plan.outputs {
+                if plan.entries.iter().any(|entry| {
+                    entry.path == output.path && entry.before.as_ref() == Some(&entry.after)
+                }) {
+                    continue;
+                }
                 reload::run(&output.reload, output.timeout_ms)
                     .with_context(|| format!("adapter {}", output.name))?;
             }

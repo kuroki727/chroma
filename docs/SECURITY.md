@@ -108,15 +108,22 @@ pop the next history entry.
 Wallpaper opening is nonblocking so FIFOs/devices are rejected without waiting
 for a writer. Only regular PNG/JPEG inputs are accepted. The compressed input is
 read through a 64 MiB bound before decoding, rather than trusting its initial file
-length. Headers must advertise nonzero dimensions, at most 16384 per side,
-**16,777,216 pixels**, and at most **64 MiB decoded output**. This supports 5120×2880 RGB wallpapers;
-larger wallpapers need offline resizing. Sampling is bounded to 128×128 and
-clustering to 12 centers/24 iterations.
+length. Headers must advertise nonzero dimensions, <=16384 per side, and area
+<=8192×4320 (DCI 8K). This is a decode-work bound, independent of memory.
+PNG uses scanline decoding with a 16 MiB codec allocation budget, ignored text/ICC
+metadata and at most 16384 retained RGBA samples. Adam7 is sampled pass by pass.
+Trailing image data/CRCs/IEND are validated before any palette is returned.
+APNG is refused. Ordinary JPEG retains the previous <=64 MiB decoded-output
+and <=16,777,216-pixel limits. Larger RGB/grayscale JPEG uses 1/8 reduced DCT
+output (<=64 MiB) and bounds padded coefficients plus worst-case queued row
+copies to 416 MiB. High-resolution CMYK and lossless JPEG are unsupported.
 
-These are input/output limits, **not a hard process RSS limit**. Compressed buffers,
-codec metadata, progressive JPEG coefficients and allocator overhead consume more
-memory. The `image` decoder allocation setting is non-strict for some codecs.
-No parser fuzz campaign, OS memory sandbox or hard CPU deadline was added.
+These are storage/work limits, **not a hard process RSS or CPU limit**. Input,
+metadata, codec buffers, worker stacks and allocator overhead consume additional
+memory. Progressive JPEG needs full-resolution coefficient storage even at
+reduced output resolution; see [details](HIGH_RES_ISLAND.md). Clustering remains
+bounded to 128×128 samples, 12 centers and 24 iterations. No OS memory sandbox,
+parser fuzz campaign or hard CPU deadline was added.
 
 Managed text inputs and serialized state/transaction files are limited to 4 MiB.
 Snapshots duplicate data and can reach this serialized limit sooner than the raw

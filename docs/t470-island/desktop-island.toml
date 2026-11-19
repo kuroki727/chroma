@@ -3,3 +3,6 @@ desktop = "island"
 config_path = "/home/kuroki/.config/island/style.css"
 output = "generated/desktop-island.css"
 island_readable = true
+# Requires Island already started with -s pointing to this output.
+# Enable general.auto_reload in config.toml to execute adapter reload commands.
+reload = ["/home/kuroki/.local/bin/island", "ctl", "reload"]

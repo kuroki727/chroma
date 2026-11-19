@@ -413,15 +413,16 @@ format guarantee. Contrast measurements assume opaque sRGB colors; compositor
 opacity, font rendering and application overrides still need visual review.
 See [the measured audit, real-wallpaper comparison and safe preview instructions](docs/WALLPAPER_GENERATION.md).
 
-Limits: actual compressed input <=64 MiB, dimensions <=16384 per side, at most
-16,777,216 pixels (including 5120×2880 RGB wallpapers), and <=64 MiB decoded output. These checks
-precede pixel decoding. FIFO/device inputs are rejected without blocking. The
-image is decoded before sampling, so large images still cost decode time and
-memory. Codec-internal allocations and compressed buffers add overhead; this is
-not a hard process memory cap. Resize larger wallpapers offline. Fully transparent
-images are rejected. Embedded ICC
-profiles/HDR and wide-gamut color management are not implemented; pixels are treated
-as sRGB. Thresholded transparency is an approximation.
+Limits: compressed input <=64 MiB, dimensions <=16384 per side and area <=
+8192×4320 (DCI 8K). PNG is sampled while streaming scanlines, including Adam7
+and 16-bit RGBA; no full frame is allocated. Ordinary JPEG retains its existing
+codec and samples. Larger 8-bit RGB/grayscale JPEG uses 1/8 DCT decoding before
+sampling. Progressive JPEG still needs bounded full-resolution coefficients;
+this is not a 64 MiB process memory guarantee. Animated PNG and high-resolution
+CMYK/lossless JPEG are unsupported. See [bounds and verification](docs/HIGH_RES_ISLAND.md).
+FIFO/device inputs are rejected without blocking. Fully transparent images are
+rejected. ICC/HDR and wide-gamut color management are not implemented; pixels
+are treated as sRGB. Thresholded transparency is an approximation.
 
 ## Template language and custom adapters
 

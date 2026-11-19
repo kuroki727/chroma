@@ -1,26 +1,12 @@
 use crate::{
-    Context, Result, ensure,
+    Result, ensure,
     palette::{
         Colors, Palette,
         colors::{Color, distance},
     },
 };
 use clap::ValueEnum;
-use image::{DynamicImage, GenericImageView, ImageDecoder, ImageFormat, ImageReader, Limits};
-use std::{
-    collections::BTreeMap,
-    fs::OpenOptions,
-    io::{Cursor, Read},
-    os::unix::fs::OpenOptionsExt,
-    path::Path,
-};
-
-const MAX_INPUT: u64 = 64 * 1024 * 1024;
-// 5K wallpapers (5120×2880) fit the unchanged 64 MiB decoded-byte budget.
-// Pixel count also bounds work for grayscale input. Never expand to a full-size
-// RGBA image: access bounded samples in the native decoded format.
-const MAX_PIXELS: u64 = 16_777_216;
-const MAX_DECODED: u64 = 64 * 1024 * 1024;
+use std::{collections::BTreeMap, path::Path};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -39,63 +25,11 @@ pub struct Representative {
 /// Bounded, deterministic extraction. Sample actual pixels so resampling cannot
 /// blend hidden transparent RGB into visible colors or invent intermediate hues.
 pub fn extract(path: &Path) -> Result<Vec<Representative>> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
-        .open(path)
-        .with_context(|| format!("opening image {}", path.display()))?;
-    let metadata = file.metadata()?;
-    ensure!(
-        metadata.is_file() && metadata.len() <= MAX_INPUT,
-        "image must be a regular file no larger than 64 MiB"
-    );
-    // A metadata length check alone does not bound a growing or virtual file.
-    // Freeze bounded input before passing it to codecs which read to EOF.
-    let mut input = Vec::new();
-    file.take(MAX_INPUT + 1).read_to_end(&mut input)?;
-    ensure!(
-        input.len() as u64 <= MAX_INPUT,
-        "compressed image exceeds 64 MiB"
-    );
-    let mut reader = ImageReader::new(Cursor::new(input)).with_guessed_format()?;
-    ensure!(
-        matches!(reader.format(), Some(ImageFormat::Png | ImageFormat::Jpeg)),
-        "only PNG and JPEG images are supported"
-    );
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(16384);
-    limits.max_image_height = Some(16384);
-    limits.max_alloc = Some(MAX_DECODED);
-    reader.limits(limits);
-    let decoder = reader
-        .into_decoder()
-        .context("reading image headers within limits")?;
-    let (width, height) = decoder.dimensions();
-    ensure!(
-        width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_PIXELS,
-        "image pixel count exceeds 16,777,216 or is zero (5K supported; decoded data must also fit 64 MiB)"
-    );
-    ensure!(
-        decoder.total_bytes() <= MAX_DECODED,
-        "decoded image exceeds 64 MiB"
-    );
-    let decoded =
-        DynamicImage::from_decoder(decoder).context("decoding image within pixel/output limits")?;
+    let sampled = super::sampling::read(path)?;
     let mut histogram = BTreeMap::<[u8; 3], usize>::new();
-    let (columns, rows) = (width.min(128), height.min(128));
-    for y in 0..rows {
-        for x in 0..columns {
-            // One deterministically permuted sample per equal-area stratum.
-            // The long axis of a 16384×1 input still receives up to 128 samples.
-            let left = x * width / columns;
-            let top = y * height / rows;
-            let px = left + (x * 37 + y * 17 + 11) % ((x + 1) * width / columns - left);
-            let py = top + (x * 13 + y * 28 + 7) % ((y + 1) * height / rows - top);
-            let pixel = decoded.get_pixel(px, py).0;
-            if pixel[3] >= 128 {
-                *histogram.entry([pixel[0], pixel[1], pixel[2]]).or_default() +=
-                    usize::from(pixel[3]);
-            }
+    for pixel in sampled {
+        if pixel[3] >= 128 {
+            *histogram.entry([pixel[0], pixel[1], pixel[2]]).or_default() += usize::from(pixel[3]);
         }
     }
     ensure!(

@@ -199,7 +199,7 @@ fn five_k_png_and_jpeg_wallpapers_fit_the_unchanged_decoded_byte_budget() {
 }
 
 #[test]
-fn five_k_sixteen_bit_rgba_headers_still_hit_the_decoded_byte_limit() {
+fn truncated_five_k_sixteen_bit_rgba_is_rejected_during_streaming() {
     let root = tempdir().unwrap();
     let path = root.path().join("sixteen-bit.png");
     image::ImageBuffer::<image::Rgba<u16>, Vec<u16>>::from_pixel(
@@ -222,8 +222,5 @@ fn five_k_sixteen_bit_rgba_headers_still_hit_the_decoded_byte_limit() {
     bytes[29..33].copy_from_slice(&(!crc).to_be_bytes());
     std::fs::write(&path, bytes).unwrap();
     let error = format!("{:#}", generate(&path, Mode::Dark, "Bounded").unwrap_err());
-    assert!(
-        error.contains("limit") || error.contains("decoded image exceeds"),
-        "{error}"
-    );
+    assert!(error.contains("decoding PNG"), "{error}");
 }

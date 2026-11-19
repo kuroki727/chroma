@@ -5,6 +5,7 @@
 #include "config.hpp"
 #include <fstream>
 #include <iterator>
+#include <unistd.h>
 
 int main(int argc, char** argv) {
     if (argc != 2 && argc != 3) return 2;
@@ -13,7 +14,20 @@ int main(int argc, char** argv) {
     std::string css((std::istreambuf_iterator<char>(file)), {});
     Settings settings{};
     std::string error;
-    if (!load_settings("", argv[1], settings, error)) return 1;
+    // The real parser warns, but returns success, for unknown properties,
+    // selectors and bad colors. Turn every such diagnostic into failure.
+    FILE* diagnostics = tmpfile();
+    int saved_stderr = dup(STDERR_FILENO);
+    if (!diagnostics || saved_stderr < 0) return 2;
+    fflush(stderr);
+    if (dup2(fileno(diagnostics), STDERR_FILENO) < 0) return 2;
+    bool loaded = load_settings("", argv[1], settings, error);
+    fflush(stderr);
+    long diagnostic_bytes = ftell(diagnostics);
+    if (dup2(saved_stderr, STDERR_FILENO) < 0) return 2;
+    close(saved_stderr);
+    fclose(diagnostics);
+    if (!loaded || diagnostic_bytes != 0) return 1;
     const Style& style = settings.style;
     for (size_t start; (start = css.find("/*")) != std::string::npos;) {
         auto end = css.find("*/", start + 2);

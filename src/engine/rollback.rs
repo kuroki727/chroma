@@ -73,6 +73,9 @@ fn reload_restored(paths: &Paths, config: &Config, transaction: &Transaction) ->
         .context("files restored, but reload configuration changed")?;
     let mut errors = Vec::new();
     for entry in &transaction.entries {
+        if entry.before.as_ref() == Some(&entry.after) {
+            continue;
+        }
         if let Some(adapter) = config.adapters.get(&entry.adapter).filter(|a| a.enabled) {
             // Never execute commands stored in backups or palette data.
             let result = (|| -> Result<()> {
