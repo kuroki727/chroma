@@ -1,5 +1,8 @@
 # Automatic wallpaper synchronization
 
+Current combined branch: see [high-resolution and Island validation](HIGH_RES_ISLAND.md).
+The prerequisite inspection and earlier validation below are historical.
+
 `chroma wallpaper changed IMAGE` is an explicit **post-success** hook. It does
 not set a wallpaper, poll files, start a service, install desktop imports, or
 restart applications. Automatic synchronization is disabled by default. It uses
@@ -167,8 +170,8 @@ or use imports to combine stylesheets. No Island source change, launch, signal
 or restart is part of this feature. The offline actual-parser harness remains
 available in `scripts/check-island-parser.cpp`.
 
-PR #8's fuller, contrast-aware Island profile remains a separate prerequisite
-for that prepared desktop integration. The legacy mapper can put foreground
+PR #9's synchronization is merged into main. This PR #8 includes the fuller
+contrast-aware Island profile on top of main. The legacy mapper can put foreground
 text on a bright primary-colored tile; palette contrast alone does not make
 that UI pair readable. Review mappings/contrast before enabling a legacy Island
 adapter. This feature does not silently opt into that pending profile.
@@ -235,7 +238,8 @@ claimed; existing [transaction limits](SECURITY.md) apply. Backups remain unboun
 No daemon replays requests after a killed worker, reboot or lock timeout. Reissue
 the hook for the actual current wallpaper after recovery. The marker contains
 only a request token and does not trigger work on its own. JPEG/PNG compressed
-and decoded sizes remain bounded at 64 MiB and 16,777,216 pixels (5K supported);
+input remains bounded at 64 MiB; streaming PNG and reduced-DCT JPEG support up to
+DCI 8K under separate work/storage limits (see [details](HIGH_RES_ISLAND.md));
 other formats, ICC/HDR, tiny-feature saliency and algorithm-version byte stability
 are outside the initial scope. Live appearance and daily-use reload behavior
 require a later user-controlled desktop check.

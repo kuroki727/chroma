@@ -18,6 +18,81 @@ use tempfile::{TempDir, tempdir};
 struct Fixture {
     root: TempDir,
 }
+
+#[test]
+fn island_hook_reloads_complete_standalone_stylesheet_and_recovers_failures() {
+    let f = Fixture::new(true);
+    let source = f.root.path().join("style.css");
+    fs::write(&source, include_str!("fixtures/desktop/island/style.css")).unwrap();
+    let calls = f.root.path().join("reloads");
+    let reload = f.script(
+        "island-reload",
+        &format!("printf 'reload\\n' >> '{}'", calls.display()),
+    );
+    let adapter = f.config().join("adapters/desktop-island.toml");
+    fs::create_dir_all(adapter.parent().unwrap()).unwrap();
+    let settings = format!(
+        "enabled=true\ndesktop='island'\nisland_readable=true\nconfig_path='{}'\noutput='generated/desktop-island.css'\nreload=['{}']\n",
+        source.display(),
+        reload
+    );
+    fs::write(&adapter, &settings).unwrap();
+    f.changed("a.png");
+    let css = f.config().join("generated/desktop-island.css");
+    let first = fs::read(&css).unwrap();
+    let text = String::from_utf8(first.clone()).unwrap();
+    for selector in ["flash", "dnd", "tile", "tile-on"] {
+        assert!(text.contains(&format!("{selector} {{")));
+    }
+    assert!(!text.contains("@import") && !text.contains("var("));
+    assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 1);
+    let manifest = f.manifest();
+    f.changed("a.png");
+    assert_eq!(f.manifest(), manifest);
+    assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 1);
+    fs::write(&adapter, format!("{settings}validate=['/usr/bin/false']\n")).unwrap();
+    assert!(
+        !f.run(&["wallpaper", "changed", &f.image("b.png")])
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(&css).unwrap(), first);
+    assert_eq!(f.manifest(), manifest);
+    fs::write(&adapter, settings.replace(&reload, "/usr/bin/false")).unwrap();
+    let failed = f.run(&["wallpaper", "changed", &f.image("b.png")]);
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("desktop-island"));
+    assert_eq!(fs::read(&css).unwrap(), first);
+    assert_eq!(f.manifest(), manifest);
+    fs::write(&adapter, &settings).unwrap();
+    f.changed("b.png");
+    assert_ne!(fs::read(&css).unwrap(), first);
+    f.ok(&["rollback", "--no-reload"]);
+    assert_eq!(fs::read(&css).unwrap(), first);
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        include_str!("fixtures/desktop/island/style.css")
+    );
+}
+
+#[test]
+fn unchanged_adapter_is_not_reloaded_during_apply_or_rollback() {
+    let f = Fixture::new(true);
+    fs::write(f.config().join("templates/static"), "unchanged\n").unwrap();
+    let adapter = f.config().join("adapters/static.toml");
+    fs::create_dir_all(adapter.parent().unwrap()).unwrap();
+    let settings = "enabled=true\ntemplate='templates/static'\noutput='generated/static'\nreload=['/usr/bin/true']\n";
+    fs::write(&adapter, settings).unwrap();
+    f.changed("a.png");
+    fs::write(
+        &adapter,
+        settings.replace("/usr/bin/true", "/usr/bin/false"),
+    )
+    .unwrap();
+    f.changed("b.png");
+    f.ok(&["rollback"]);
+    f.assert_palette("a.png");
+}
 impl Fixture {
     fn new(enabled: bool) -> Self {
         let f = Self {

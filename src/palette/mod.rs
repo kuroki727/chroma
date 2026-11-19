@@ -1,6 +1,7 @@
 pub mod colors;
 pub mod generator;
 pub mod presets;
+mod sampling;
 
 use crate::{Context, Result, ensure, safe_fs};
 use colors::Color;
