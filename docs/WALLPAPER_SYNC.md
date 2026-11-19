@@ -170,8 +170,8 @@ or use imports to combine stylesheets. No Island source change, launch, signal
 or restart is part of this feature. The offline actual-parser harness remains
 available in `scripts/check-island-parser.cpp`.
 
-This updated PR #8 includes the fuller contrast-aware Island profile and stacks
-on the existing #9 synchronization branch; neither PR is assumed merged. The legacy mapper can put foreground
+PR #9's synchronization is merged into main. This PR #8 includes the fuller
+contrast-aware Island profile on top of main. The legacy mapper can put foreground
 text on a bright primary-colored tile; palette contrast alone does not make
 that UI pair readable. Review mappings/contrast before enabling a legacy Island
 adapter. This feature does not silently opt into that pending profile.

@@ -1,11 +1,17 @@
 # High-resolution wallpapers and C++ Island
 
-This update continues draft PR #8 on `feat/t470-island-integration`, stacked on
-the unmerged `feat/automatic-wallpaper-sync` branch (PR #9). The existing #9
-commits retain the #4 transaction/recovery and #5 palette-quality prerequisites.
-No PR was merged and no existing prerequisite branch was rewritten. The earlier
-[Island preparation report](T470_ISLAND.md) describes commit 317025f, not this
-update's live state. Retarget #8 after its prerequisites land.
+PR #8 on `feat/t470-island-integration` now targets `main`, after the normal
+merges of #4 and #5 and the squash merge of #9. The conflict-resolution update
+merges main `edaba34c7236e16639e7cb3276f25afd44c9385d` without rewriting the
+published branch. Main's tree exactly matches the final #9 tree; resolving the
+four conflicting files preserves the previous #8 source tree byte-for-byte.
+The PR diff therefore contains only Island/high-resolution additions, with no
+reapplication of prerequisite changes. Copied prerequisite commits already in
+the published #8 ancestry remain historical ancestors of this ordinary merge.
+
+This merge preparation uses isolated tests only and does not change the live
+T470 configuration. The activation evidence below records earlier work. The
+[Island preparation report](T470_ISLAND.md) describes commit 317025f.
 
 ## Cause and decoding design
 
@@ -172,6 +178,14 @@ the existing generic template mechanism using GTK named-color definitions; no
 GTK/libadwaita-wide recoloring or active GTK integration is claimed.
 
 ## Validation results
+
+Merge preparation reran formatting, Clippy and all 164 Rust tests with all
+workspace targets/features enabled, plus doc tests and the locked release and
+example builds. All passed. The 12 guarded-writer tests, 10 mocked-wallpaper-hook
+checks, native stylesheet contrast/size checks, native startup/reversal fixture,
+five-adapter actual-client private-socket fixture and five injected ENOSPC cases
+also passed. Config, state and IPC paths for these fixtures were temporary;
+no live T470 configuration or process was changed by merge preparation.
 
 * `cargo fmt --all -- --check`: passed.
 * `cargo clippy --all-targets --locked -- -D warnings`: passed.
