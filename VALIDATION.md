@@ -1,3 +1,19 @@
+# T470 stabilization audit — v0.2, 2026-11-17
+
+Fetched main `54ebaba3e8da8b1432e1bcf31d8630cafe392480`: baseline **108 passed**.
+Final suite: **114 passed, 0 failed, 0 ignored**. Formatting, strict workspace
+Clippy, locked release build and diff checks passed. All six presets passed
+30 native parser checks on isolated copies of the T470's actual configurations;
+five isolated ENOSPC write-injection cases also passed.
+
+Read-only DMI/config inspection and isolated execution occurred on the T470 host
+inside a sandbox. Interactive visual/reload validation remains **pending explicit
+approval**. No active desktop config or process was modified. GTK3 coverage means
+CSS-provider acceptance, not a universal GTK settings adapter.
+
+See [the audit, limitations, exact reproduction commands, live checklist and
+recovery procedure](docs/T470_VALIDATION.md). The older records below are historical.
+
 # Final PR #3 audit — v0.2, 2026-11-16
 
 The complete diff against origin/main (including the inherited review-bundle
