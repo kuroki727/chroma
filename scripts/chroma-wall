@@ -1,0 +1,20 @@
+#!/bin/sh
+# Optional awww wrapper. Install explicitly; never replaces ~/.local/bin/wall.
+if [ "$#" -lt 1 ]; then
+    printf '%s\n' 'Usage: chroma-wall IMAGE [awww img options...]' >&2
+    exit 2
+fi
+image=$1
+shift
+case "$image" in
+    /*) ;;
+    *) image="$PWD/$image" ;;
+esac
+awww img "$image" "$@" || exit "$?"
+if chroma wallpaper changed "$image"; then
+    exit 0
+else
+    status=$?
+    printf '%s\n' 'chroma-wall: wallpaper command succeeded; color synchronization failed. See Chroma diagnostics above.' >&2
+    exit "$status"
+fi
