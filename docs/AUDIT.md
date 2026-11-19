@@ -1,3 +1,10 @@
+# T470 v0.2 stabilization audit
+
+The 2026-11-17 audit independently verified the baseline and fixed missing-parent
+rollback and indented Kitty directive handling. See [T470 validation](T470_VALIDATION.md)
+for 114-test results, isolated native/error checks, environment boundaries and
+the pending live validation gate.
+
 # Final v0.2 audit
 
 The complete PR #3 diff, inherited integration work, confirmed defects and final

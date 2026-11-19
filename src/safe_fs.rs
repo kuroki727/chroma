@@ -7,10 +7,11 @@ use std::{
     io::{self, Read, Write},
     os::unix::{
         ffi::OsStringExt,
-        fs::{MetadataExt, PermissionsExt},
+        fs::{FileExt, MetadataExt, PermissionsExt},
     },
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use rustix::fs::{self, AtFlags, Mode, OFlags};
@@ -51,6 +52,26 @@ fn leaf(name: &std::ffi::OsStr) -> io::Result<()> {
 pub struct Dir(File);
 
 pub struct Lock(File);
+
+impl Lock {
+    /// Cancel work admitted before a manual operation. Keep the same inode:
+    /// replacing the lock file would break flock exclusion. This is coordination
+    /// data only, outside the version-1 theme manifest and rollback history.
+    pub fn advance_epoch(&self) -> io::Result<()> {
+        let epoch = format!(
+            "{}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(io::Error::other)?
+                .as_nanos(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        self.0.write_all_at(epoch.as_bytes(), 0)?;
+        self.0.set_len(epoch.len() as u64)?;
+        self.0.sync_all()
+    }
+}
 
 impl Drop for Lock {
     fn drop(&mut self) {
@@ -255,6 +276,13 @@ impl Dir {
         )?;
         fs::flock(&fd, fs::FlockOperation::NonBlockingLockExclusive)?;
         Ok(Lock(fd.into()))
+    }
+
+    pub fn operation_epoch(&self) -> io::Result<Vec<u8>> {
+        self.check_target(std::ffi::OsStr::new("lock"))?;
+        Ok(self
+            .read(std::ffi::OsStr::new("lock"))?
+            .map_or_else(Vec::new, |s| s.bytes))
     }
 }
 
@@ -494,6 +522,30 @@ mod tests {
         let _inherited = rustix::io::dup(&lock.0).unwrap();
         drop(lock);
         let _next_operation = dir.lock().unwrap();
+    }
+
+    #[test]
+    fn cancellation_epoch_changes_without_replacing_or_releasing_the_writer_lock() {
+        let root = tempfile::Builder::new()
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
+        let dir = Dir::open(root.path(), false).unwrap();
+        assert!(dir.operation_epoch().unwrap().is_empty());
+        let lock = dir.lock().unwrap();
+        let inode = std::fs::metadata(root.path().join("lock")).unwrap().ino();
+        lock.advance_epoch().unwrap();
+        let first = dir.operation_epoch().unwrap();
+        assert!(!first.is_empty());
+        assert!(dir.lock().is_err());
+        lock.advance_epoch().unwrap();
+        assert_ne!(dir.operation_epoch().unwrap(), first);
+        assert_eq!(
+            std::fs::metadata(root.path().join("lock")).unwrap().ino(),
+            inode
+        );
+        drop(lock);
+        let _next = dir.lock().unwrap();
     }
 
     #[test]

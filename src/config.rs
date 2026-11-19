@@ -154,6 +154,10 @@ pub struct Adapter {
     /// argv, never parsed by a shell.
     pub reload: Vec<String>,
     pub reload_timeout_ms: Option<u64>,
+    /// Optional noninteractive wallpaper-hook validator. {file} is a temporary
+    /// generated file argument; argv is never interpreted by a shell.
+    pub validate: Vec<String>,
+    pub validation_timeout_ms: Option<u64>,
     /// Fixed application alpha bytes, owned by local config, never by palettes.
     pub alpha: BTreeMap<String, u8>,
 }
@@ -162,10 +166,29 @@ pub struct Adapter {
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub general: General,
+    pub wallpaper: Wallpaper,
     pub adapters: BTreeMap<String, Adapter>,
     /// Read provenance, not part of the configuration format.
     #[serde(skip)]
     pub inputs: safe_fs::Inputs,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Wallpaper {
+    pub enabled: bool,
+    pub debounce_ms: u64,
+    pub wait_timeout_ms: u64,
+}
+
+impl Default for Wallpaper {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            debounce_ms: 200,
+            wait_timeout_ms: 30_000,
+        }
+    }
 }
 
 impl Config {
@@ -194,29 +217,48 @@ impl Config {
         }
         inputs.check()?;
         config.inputs = inputs;
+        ensure!(
+            config.wallpaper.debounce_ms <= 2000,
+            "wallpaper.debounce_ms must be 0–2000"
+        );
+        ensure!(
+            (1..=300_000).contains(&config.wallpaper.wait_timeout_ms),
+            "wallpaper.wait_timeout_ms must be 1–300000"
+        );
         palette::valid_id(&config.general.default_palette)?;
         for (name, adapter) in &config.adapters {
             palette::valid_id(name)?;
-            if !adapter.reload.is_empty() {
-                ensure!(
-                    !adapter.reload[0].is_empty()
-                        && adapter.reload.iter().all(|a| !a.contains('\0')),
-                    "adapter {name}: invalid reload argv"
-                );
-                let command = Path::new(&adapter.reload[0]);
-                ensure!(
-                    command.is_absolute() || command.components().count() == 1,
-                    "adapter {name}: reload executable must be absolute or a PATH name"
-                );
-                if matches!(
-                    command.file_name().and_then(|s| s.to_str()),
-                    Some("sh" | "bash" | "zsh" | "fish" | "dash")
-                ) {
-                    bail!(
-                        "adapter {name}: shell reload commands are not supported; use an executable script explicitly"
+            for (action, argv) in [("reload", &adapter.reload), ("validate", &adapter.validate)] {
+                if !argv.is_empty() {
+                    ensure!(
+                        !argv[0].is_empty() && argv.iter().all(|a| !a.contains('\0')),
+                        "adapter {name}: invalid {action} argv"
                     );
+                    let command = Path::new(&argv[0]);
+                    ensure!(
+                        command.is_absolute() || command.components().count() == 1,
+                        "adapter {name}: {action} executable must be absolute or a PATH name"
+                    );
+                    if matches!(
+                        command.file_name().and_then(|s| s.to_str()),
+                        Some("sh" | "bash" | "zsh" | "fish" | "dash")
+                    ) {
+                        bail!(
+                            "adapter {name}: shell {action} commands are not supported; use an executable script explicitly"
+                        );
+                    }
                 }
             }
+            ensure!(
+                adapter.validate.is_empty()
+                    || (!adapter.validate[0].contains('{')
+                        && adapter.validate[1..].iter().any(|s| s.contains("{file}"))),
+                "adapter {name}: validate needs a {{file}} argument and a literal executable"
+            );
+            ensure!(
+                (1..=300_000).contains(&adapter.validation_timeout_ms.unwrap_or(3000)),
+                "adapter {name}: validation_timeout_ms must be 1–300000"
+            );
             ensure!(
                 (1..=300_000).contains(&adapter.reload_timeout_ms.unwrap_or(3000)),
                 "adapter {name}: reload_timeout_ms must be 1–300000"

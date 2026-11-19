@@ -6,6 +6,23 @@ wallpaper. No daemon, network service, wallpaper setter, or desktop session is
 required. MIT licensed. Version 0.2 adds read-only adapter discovery, guided fragment enablement, and application-aware review bundles with manual activation.
 See [desktop integration and limitations](docs/DESKTOP_INTEGRATION.md).
 
+Optional wallpaper synchronization uses an explicit hook after the wallpaper
+manager succeeds. Review the [wallpaper hook guide](docs/WALLPAPER_SYNC.md) for
+setup, concurrency, recovery and Island limitations. It starts disabled:
+
+```sh
+chroma wallpaper enable --dry-run
+chroma wallpaper enable
+chroma wallpaper changed /absolute/path/wallpaper.jpg --dry-run
+chroma wallpaper changed /absolute/path/wallpaper.jpg
+chroma wallpaper disable
+```
+
+`scripts/chroma-wall` optionally wraps `awww img` and calls the hook only on
+success. Existing wallpaper scripts and desktop configuration are never installed
+or edited automatically. Enabled adapters and native imports must already be
+configured; application reloads retain their existing separate opt-in settings.
+
 Chroma **never edits your application's main configuration**. You choose adapters,
 review generated files, and add imports yourself. Every shipped adapter starts
 disabled. Fonts, geometry, keybindings, layout, animations and opacity are outside
@@ -368,25 +385,38 @@ contrast guarantee.
 ## Wallpaper extraction
 
 PNG and JPEG decoding happens in Rust with `image`, with only those codecs enabled.
-The generator samples a thumbnail bounded by 128×128 pixels, ignores pixels with
-alpha < 128, and clusters in OKLab using weighted Lloyd k-means. Initialization
-chooses the most frequent color then farthest points; sorting and tie handling
-are deterministic. It uses at most 12 clusters and 24 iterations.
+A deterministic stratified grid reads up to 128×128 actual pixels in the native
+decoded image. Pixels with alpha <128 are ignored; retained samples are weighted
+by alpha. This avoids mixing invisible RGB into visible colors and retains
+samples along narrow images. Weighted OKLab k-means uses at most 12 centers and
+24 iterations, merges centers within .04 OKLab distance, and drops clusters below
+0.5% of sampled coverage. Sorting and tie handling are deterministic.
 
-Cluster population and chroma select the primary hue. Secondary hues must be
-separated by >=45°, with a +75° fallback for single-hue/monochrome images. Layer
-lightnesses are separated, neutral surfaces are tinted, status colors retain
-conventional hues with distinct lightnesses, and gamut mapping reduces chroma.
-Foreground/muted text stay readable against generated surfaces; accents are
-refined to >=3:1 against them. Flat black, white, grayscale, red, green and blue
-fixtures are covered. Identical input/settings reproduce the same TOML on the
-same toolchain; floating-point behavior across future algorithm versions is not
-a stable palette format guarantee.
+Population and chroma select source accents. Neutrals use the image's weighted
+tone; grayscale sources stay neutral. Secondary accents use a sufficiently
+different source chromatic coordinate, or change lightness/chroma of the same
+hue. No complementary hue is invented. Dark and light modes use separate tonal
+ranges influenced by source lightness. Gamut mapping reduces chroma at fixed hue.
+
+Generated foreground, muted, primary, secondary and status colors reach **4.5:1**
+against background, surface and surface_alt; borders reach **3:1** against those
+surfaces. All **16 explicit ANSI entries** reach 4.5:1 against the terminal
+background. ANSI red/green/yellow/blue/magenta/cyan retain conventional hue families,
+using nearby source hues and scene saturation. Dark-mode ANSI black is a readable
+gray, rather than identical to the background. ANSI combinations on arbitrary
+colored terminal backgrounds are not covered. Existing presets and the fallback
+rules for hand-written palettes remain unchanged.
+
+Identical input/settings reproduce the same TOML on the same toolchain;
+floating-point behavior across future algorithm versions is not a stable palette
+format guarantee. Contrast measurements assume opaque sRGB colors; compositor
+opacity, font rendering and application overrides still need visual review.
+See [the measured audit, real-wallpaper comparison and safe preview instructions](docs/WALLPAPER_GENERATION.md).
 
 Limits: actual compressed input <=64 MiB, dimensions <=16384 per side, at most
 16,777,216 pixels (including 5120×2880 RGB wallpapers), and <=64 MiB decoded output. These checks
 precede pixel decoding. FIFO/device inputs are rejected without blocking. The
-image is decoded before thumbnailing, so large images still cost decode time and
+image is decoded before sampling, so large images still cost decode time and
 memory. Codec-internal allocations and compressed buffers add overhead; this is
 not a hard process memory cap. Resize larger wallpapers offline. Fully transparent
 images are rejected. Embedded ICC

@@ -336,7 +336,12 @@ fn line_edits(kind: Kind, source: &str) -> Result<Vec<Edit>> {
         }
         if !text.starts_with('#') {
             let separator = if kind == Kind::Kitty {
-                line.find(char::is_whitespace)
+                // Kitty permits indentation. Locate the separator after the
+                // directive, retaining byte offsets into the original source.
+                let directive = line.trim_start();
+                directive
+                    .find(char::is_whitespace)
+                    .map(|split| line.len() - directive.len() + split)
             } else {
                 line.find('=')
             };

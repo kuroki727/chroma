@@ -18,7 +18,17 @@ pub fn restore(paths: &Paths, transaction: &Transaction) -> Result<()> {
     let mut errors = Vec::new();
     for entry in transaction.entries.iter().rev() {
         let result = (|| -> Result<()> {
-            let (dir, file) = Dir::parent(&entry.path)?;
+            let (dir, file) = match Dir::parent(&entry.path) {
+                Ok(pair) => pair,
+                // A creation is already undone if its parent is gone too. Do
+                // not recreate directories, or accept symlink/permission errors.
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound && entry.before.is_none() =>
+                {
+                    return Ok(());
+                }
+                Err(error) => return Err(error.into()),
+            };
             dir.check_writable()?;
             dir.check_target(&file)?;
             let actual = dir.read(&file)?;
@@ -141,6 +151,9 @@ pub fn rollback(paths: &Paths, config: &Config, no_reload: bool) -> Result<()> {
             || (state.current == transaction.after && state.head.as_deref() == Some(&id)),
         "recovery state does not match backup; no files changed"
     );
+    // An older admitted wallpaper request must not undo explicit recovery.
+    // This never reads the hook queue or local adapter configuration.
+    _lock.advance_epoch()?;
     // Mark rollback before restoring anything; crashes can always be retried.
     let previous = state.clone();
     state.pending = Some(Pending {
